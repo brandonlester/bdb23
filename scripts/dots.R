@@ -2,19 +2,25 @@
 source("https://raw.githubusercontent.com/mlfurman3/gg_field/main/gg_field.R")
 library(gganimate)
 
-animate_play <- function(ex_gameId, ex_playId) {
+animate_play <- function(tracking_df, plays_df, ex_gameId, ex_playId) {
+  
+  #print(head(tracking_df))
   
   print('filtering to play')
   
-  df_examplePlay <- df_plays %>%
+  df_examplePlay <- plays_df %>%
     filter(gameId == ex_gameId & playId == ex_playId) %>% 
     select(gameId, playId, playDescription)
 
+  stopifnot(nrow(df_examplePlay) == 1)
+  
+  #print(head(df_examplePlay))
+  
   print('joining data')
   
   #merging tracking data to play
   df_examplePlayTracking <- inner_join(df_examplePlay,
-                                       df_tracking,
+                                       tracking_df,
                                        by = c("gameId" = "gameId",
                                               "playId" = "playId")) %>%
     
@@ -30,7 +36,11 @@ animate_play <- function(ex_gameId, ex_playId) {
   size_vals <- c(6, 4, 6)
   shape_vals <- c(21, 16, 21)
   plot_title <- df_examplePlay$playDescription
-  #nFrames <- max(df_examplePlayTracking$frameId)
+  num_frames <- max(df_examplePlayTracking$frameId)
+  
+  #print(head(df_examplePlayTracking))
+  #print("num_frames: ")
+  #print(num_frames)
   
   print('creating plot')
   
@@ -83,7 +93,7 @@ animate_play <- function(ex_gameId, ex_playId) {
   
   #saving animation to display in markdown cell below:
   animate(anim, width = 720, height = 440,
-          fps = 10, #nframe = nFrames,
+          fps = 10, nframes = num_frames,
           renderer = gifski_renderer())
   
   #anim_save("output.gif")

@@ -1,7 +1,7 @@
 #wrangle
 library(tidyverse)
 library(skimr)
-source("dots.R")
+source("scripts/dots.R")
 
 data_folder <- "data"
 data_fp <- list.files(data_folder)
@@ -38,7 +38,7 @@ df_pff %>%
   summary()
 
 
-#frams of interest
+#frames of interest
 df_tracking_foi <- df_tracking %>% 
   #head(130) %>% 
   group_by(gameId, playId) %>% 
@@ -50,3 +50,94 @@ df_tracking_foi <- df_tracking %>%
   ungroup()
 
 #TODO - remove df_tracking once above confirmed
+rm(df_tracking)
+rm(skim_tracking)
+
+skim_tracking_foi <- skimr::skim(df_tracking_foi)
+
+
+#pocket size
+
+df_pass_pb <- df_pff %>% 
+  filter(pff_role == "Pass Block") %>% 
+  select(contains("Id"), pff_positionLinedUp, pff_blockType, pff_backFieldBlock)
+
+df_pass_pb %>% count(pff_blockType)
+
+df_pff_pocket_positions <- df_pff %>% 
+  filter(
+    (pff_positionLinedUp %in% ol_positions & pff_role == "Pass Block") |
+      pff_positionLinedUp == "QB" & pff_role == "Pass"
+  )
+
+df_tracking_pocket_positions <- df_tracking_foi %>% 
+  inner_join(
+    select(df_pff_pocket_positions, gameId, playId, nflId, pff_positionLinedUp), 
+    by = c("gameId", "playId", "nflId")
+  )
+
+sorted_pocket_positions <- "C,LG,LT,QB,RG,RT"
+
+df_tracking_pocket_plays <- df_tracking_pocket_positions %>% 
+  group_by(gameId, playId) %>%
+  mutate(positions = paste(sort(unique(pff_positionLinedUp)), collapse = ",")) %>% 
+  filter(positions == sorted_pocket_positions) %>% 
+  ungroup() %>% 
+  select(-positions) %>% 
+  rename(position = pff_positionLinedUp)
+
+df_tracking_pocket <- df_tracking_pocket_plays %>% 
+  group_by(gameId, playId, frameId) %>% 
+  summarise(
+    across(.cols = c(x,y), .fns = function(z) z[position == "QB"], .names = "{.col}_QB"),
+    across(.cols = c(x,y), .fns = function(z) z[position == "LT"], .names = "{.col}_LT"),
+    across(.cols = c(x,y), .fns = function(z) z[position == "LG"], .names = "{.col}_LG"),
+    across(.cols = c(x,y), .fns = function(z) z[position == "C"], .names = "{.col}_C"),
+    across(.cols = c(x,y), .fns = function(z) z[position == "RG"], .names = "{.col}_RG"),
+    across(.cols = c(x,y), .fns = function(z) z[position == "RT"], .names = "{.col}_RT")
+  )
+
+
+# df_tracking_pocket %>% 
+#   pivot_longer(cols = -c(gameId, playId, frameId)) %>% 
+#   mutate(
+#     axis = str_sub(name, end = 1),
+#     position = str_sub(name, start = 3)
+#   ) %>% 
+#   select(-name) %>% 
+#   pivot_wider(id_cols = c(gameId, playId, frameId, position), names_from = axis, values_from = value)
+
+
+hex_points <- c("QB", "LT", "LG", "C", "RG", "RT")
+
+example_play_hex <- df_tracking_pocket_plays %>%
+  select(gameId, playId, frameId, position, x, y) %>% 
+  arrange(gameId, playId, frameId) %>% head(6) #%>% 
+  #ggplot(aes(x, y)) + geom_point()
+
+frame_group_vars <- c("gameId", "playId", "frameId")
+
+#https://www.wikihow.com/Calculate-the-Area-of-a-Hexagon
+df_frame_pocket_size <- df_tracking_pocket_plays %>% 
+  select(gameId, playId, frameId, position, x, y) %>% 
+  arrange(gameId, playId, frameId, factor(position, levels = hex_points)) %>% 
+  group_by(gameId, playId, frameId) %>% 
+  mutate(x_next = lead(x), y_next = lead(y)) %>% #print(n=100)
+  mutate(
+    x_start = x[position == hex_points[1]], 
+    y_start = y[position == hex_points[1]],
+    x_next = ifelse(is.na(x_next), x_start, x_next),
+    y_next = ifelse(is.na(y_next), y_start, y_next)
+  ) %>% 
+  select(-x_start, -y_start) %>% 
+  mutate(
+    x_times_next_y = x * y_next,
+    y_times_next_x = y * x_next
+  ) %>% #print(n=100)
+  summarise(
+    sum_a = sum(x_times_next_y), 
+    sum_b = sum(y_times_next_x)
+  ) %>% 
+  mutate(pocket_size = abs(sum_a - sum_b)/2) %>% #square yards
+  select(-sum_a, -sum_b)
+  ungroup()
