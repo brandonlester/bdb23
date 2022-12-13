@@ -139,5 +139,49 @@ df_frame_pocket_size <- df_tracking_pocket_plays %>%
     sum_b = sum(y_times_next_x)
   ) %>% 
   mutate(pocket_size = abs(sum_a - sum_b)/2) %>% #square yards
-  select(-sum_a, -sum_b)
+  select(-sum_a, -sum_b) %>% 
   ungroup()
+
+  
+
+df_pocket_w_size <- df_tracking_pocket_positions %>% 
+  inner_join(df_frame_pocket_size, by = c("gameId", "playId", "frameId"))
+
+
+xtemp <- df_pocket_w_size %>% 
+  arrange(gameId, playId, frameId, factor(pff_positionLinedUp, levels = hex_points)) %>% 
+  filter(gameId == 2021090900 & playId == 97) %>% #& frameId == 12) %>% 
+  #filter(gameId == 2021091201 & playId == 2126) %>% #smallest pocket size
+  inner_join(select(df_plays, gameId, playId, playDescription)) %>% 
+  std_coords()
+
+bfp <- base_field_plot(min(xtemp$x)-10, max(xtemp$x)+10)
+
+pocket_plot <- bfp +
+  geom_polygon(data = xtemp, aes(x = x, y = y)) +
+  geom_text(data = xtemp, aes(x = mean(x), y = max(y)+ 3, label = round(pocket_size,2))) +
+  #adding players
+  geom_point(
+    data = xtemp, 
+    aes(x=x, y=y, shape=team, fill=team, group=nflId, size=team, colour=team), 
+    alpha = 0.7
+  ) +  
+  #adding jersey numbers
+  geom_text(
+    data = xtemp,
+    aes(x = x, y = y, label = jerseyNumber),
+    colour = "white", vjust = 0.36, size = 3.5
+  ) +
+  ggtitle(xtemp$playDescription)
+
+pocket_anim <- pocket_plot +
+  transition_time(frameId)  +
+  ease_aes("linear") + 
+  NULL
+
+
+play_pocket_anim <- animate(pocket_anim, width = 720, height = 440,
+          fps = 10, nframes = max(xtemp$frameId),
+          renderer = gifski_renderer())
+  
+anim_save("output/pocket_size.gif", play_pocket_anim)   
