@@ -5,6 +5,9 @@
 # source data files
 data/
 
+#model objects
+output/rf0.rds
+
 # History files
 .Rhistory
 .Rapp.history
