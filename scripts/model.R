@@ -12,12 +12,21 @@ library(skimr)
 library(rsample)
 library(ranger)
 library(MLmetrics)
+library(fastshap)
 
 
 # Constants ---------------------------------------------------------------
 
 data_folder <- "data"
 output_folder <- "output"
+
+
+# Functions ---------------------------------------------------------------
+
+# Prediction wrapper
+pred_func <- function(object, newdata) {
+  predict(object, data = newdata)$predictions
+}
 
 # Read data ---------------------------------------------------------------
 
@@ -46,29 +55,55 @@ mean(df_test$sack)
 
 # Model training ----------------------------------------------------------
 
+#create vector of featrue cols then create formula
+
 # #train base random forest model
-# rf0 <- ranger::ranger(sack ~ pocket_size, data = df_train, probability = TRUE)
-# readr::write_rds(rf0, file.path(output_folder, "rf0.rds"))
-rf0 <- readr::read_rds(file.path(output_folder, "rf0.rds"))
+rf0 <- ranger::ranger(sack ~ pocket_size, data = df_train, probability = TRUE)
+
+rf0[["data_train"]] <- df_train
+rf0[["data_test"]] <- df_test
+readr::write_rds(rf0, file.path(output_folder, "rf0.rds"))
+
+#rf0 <- readr::read_rds(file.path(output_folder, "rf0.rds"))
 
 train_brier <- rf0$prediction.error
-train_preds <- as_tibble(rf0$predictions) %>% rename(sack = `1`, no_sack = `0`)
-train_logloss <- MLmetrics::LogLoss(y_pred = train_preds$sack, y_true = df_train$sack)
+train_preds <- as_tibble(rf0$predictions) %>% rename(pred_sack = `1`, pred_no_sack = `0`)
+train_logloss <- MLmetrics::LogLoss(y_pred = train_preds$sack, y_true = df_train$pred_sack)
 
 # Model testing -----------------------------------------------------------
 
-test_preds_obj <- predict(rf0, data = df_test)
-test_preds <- as_tibble(test_preds_obj$predictions) %>% rename(sack = V2, no_sack = V1)
-test_logloss <- MLmetrics::LogLoss(y_pred = test_preds$sack, y_true = df_test$sack)
+test_preds <- pred_func(rf0, newdata = df_test) %>% 
+  as_tibble(test_preds_obj$predictions) %>% 
+  rename(pred_sack = V2, pred_no_sack = V1)
+
+test_logloss <- MLmetrics::LogLoss(y_pred = test_preds$sack, y_true = df_test$pred_sack)
 
 
 
 # Model eval --------------------------------------------------------------
 
-#shap values
-#learning curves
-#other model performance
+trn_w_preds <- df_train %>% 
+  mutate(data_split = "train") %>% 
+  bind_cols(train_preds)
 
+tst_w_preds <- df_test %>% 
+  mutate(data_split = "test") %>% 
+  bind_cols(test_preds)
+
+df_results <- bind_rows(trn_w_preds, tst_w_preds)
+readr::write_rds(df_results, file.path(output_folder, "df_results.rds"))
+
+# #shap values
+# df_shap <- explain(
+#   rf0, 
+#   #feature_names = ,
+#   X = as.data.frame(df_train["pocket_size"]), 
+#   nsim = 2,
+#   pred_wrapper = pred_func,
+#   #newdata = ,
+#   adjust = TRUE
+# )
+# readr::write_rds(df_shap, file.path(output_folder, "df_shap.rds"))
 
 # Apply results -----------------------------------------------------------
 

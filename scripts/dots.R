@@ -2,6 +2,16 @@
 source("https://raw.githubusercontent.com/mlfurman3/gg_field/main/gg_field.R")
 library(gganimate)
 
+df_pff_pocket <- readr::read_rds("data/df_pff_pocket.rds")
+
+filter_to_pocket <- function(tracking_df, pff_pocket_df) {
+  #filter to blocking OL and passing QB
+  tracking_df %>% 
+    inner_join(
+      select(pff_pocket_df, gameId, playId, nflId, pff_positionLinedUp), 
+      by = c("gameId", "playId", "nflId")
+    )
+}
 
 
 # foundation of tracking animations ---------------------------------------
@@ -124,31 +134,38 @@ animate_play <- function(tracking_df, plays_df, ex_gameId, ex_playId) {
 
 # pocket size plot and animation ------------------------------------------
 
-create_pocket_plot <- function(df_pocket_example) {
-  # df_pocket_example must be 1 play of tracking data
-  # with playDescription already joined
-  # and coordinates standardized with std_coords()
+prep_example_for_plot <- function(tracking_df, game_id, play_id) {
+  tracking_df %>% 
+    filter(gameId == game_id & playId == play_id) %>%
+    inner_join(select(df_plays, gameId, playId, playDescription)) %>% 
+    std_coords()
+}
+
+create_pocket_plot <- function(df4plot) {
+  #df4plot must be 1 play of tracking data ran through prep_example_for_plot
+  df4plot_pocket <- filter_to_pocket(df4plot, df_pff_pocket) %>% 
+    arrange(factor(pff_positionLinedUp, levels = hex_points))
   
   #create base field plot
-  bfp <- base_field_plot(min(df_pocket_example$x)-10, max(df_pocket_example$x)+10)
+  bfp <- base_field_plot(min(df4plot$x)-10, max(df4plot$x)+10)
   
   #add OL/QB tracking data and pocket size to plot for the whole play
   bfp +
-    geom_polygon(data = df_pocket_example, aes(x = x, y = y)) +
-    geom_text(data = df_pocket_example, aes(x = mean(x), y = max(y)+ 3, label = round(pocket_size,2))) +
+    geom_polygon(data = df4plot_pocket, aes(x = x, y = y)) +
+    geom_text(data = df4plot, aes(x = mean(x), y = max(y)+ 3, label = paste("Pocket Size", round(pocket_size,2), sep = ": "))) +
     #adding players
     geom_point(
-      data = df_pocket_example, 
+      data = df4plot, 
       aes(x=x, y=y, shape=team, fill=team, group=nflId, size=team, colour=team), 
       alpha = 0.7
     ) +  
     #adding jersey numbers
     geom_text(
-      data = df_pocket_example,
+      data = df4plot,
       aes(x = x, y = y, label = jerseyNumber),
       colour = "white", vjust = 0.36, size = 3.5
     ) +
-    ggtitle(df_pocket_example$playDescription)
+    ggtitle(df4plot$playDescription)
 }
 
 

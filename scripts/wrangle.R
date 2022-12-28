@@ -19,9 +19,10 @@ data_fp <- list.files(data_folder)
 
 start_events <- c("ball_snap", "autoevent_ballsnap")
 end_events <- c("pass_forward", "autoevent_passforward", "run", "qb_sack", "qb_strip_sack", "handoff")
-ol_positions <- c("RT", "RG", "C", "LG", "LT")
+
 sorted_pocket_positions <- "C,LG,LT,QB,RG,RT"
 hex_points <- c("QB", "LT", "LG", "C", "RG", "RT")
+ol_positions <- hex_points[-1]
 frame_group_vars <- c("gameId", "playId", "frameId")
 
 
@@ -80,12 +81,21 @@ df_pff_pocket <- df_pff %>%
       pff_positionLinedUp == "QB" & pff_role == "Pass"
   )
 
+#write_rds(df_pff_pocket, "data/df_pff_pocket.rds")
+
+
 #filter to blocking OL and passing QB
-df_pocket <- df_tracking %>% 
-  inner_join(
-    select(df_pff_pocket, gameId, playId, nflId, pff_positionLinedUp), 
-    by = c("gameId", "playId", "nflId")
-  ) 
+
+# df_pocket <- df_tracking %>% 
+#   inner_join(
+#     select(df_pff_pocket, gameId, playId, nflId, pff_positionLinedUp), 
+#     by = c("gameId", "playId", "nflId")
+#   )
+
+df_pocket <- filter_to_pocket(df_tracking, df_pff_pocket)
+
+
+
 
 #filter to only plays with 5 blocking OL and 1 passing QB
 df_pocket <- df_pocket %>% 
@@ -147,11 +157,14 @@ df_pocket <- df_pocket %>%
 # Visualize pocket sizes --------------------------------------------------
 
 #filter to example play, add play description, and standardize coordinates
-df_pocket_example <- df_pocket %>% 
-  filter(gameId == 2021090900 & playId == 97) %>% #& frameId == 12) %>% 
-  #filter(gameId == 2021091201 & playId == 2126) %>% #smallest pocket size
-  inner_join(select(df_plays, gameId, playId, playDescription)) %>% 
-  std_coords()
+
+# df_pocket_example <- df_pocket %>% 
+#   filter(gameId == 2021090900 & playId == 97) %>% #& frameId == 12) %>% 
+#   #filter(gameId == 2021091201 & playId == 2126) %>% #smallest pocket size
+#   inner_join(select(df_plays, gameId, playId, playDescription)) %>% 
+#   std_coords()
+
+df_pocket_example <- prep_example_for_plot(df_pocket, 2021090900, 97)
 
 #define number of frames for animation of given play
 anim_frames <- max(df_pocket_example$frameId)
