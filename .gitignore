@@ -5,8 +5,12 @@
 # source data files
 data/
 
-#model objects
+#model results and objects
 output/rf0.rds
+output/df_results.rds
+
+output/rf0_player.rds
+output/df_results_player.rds
 
 # History files
 .Rhistory

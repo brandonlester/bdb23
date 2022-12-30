@@ -2,6 +2,9 @@
 source("https://raw.githubusercontent.com/mlfurman3/gg_field/main/gg_field.R")
 library(gganimate)
 
+
+hex_points <- c("QB", "LT", "LG", "C", "RG", "RT")
+
 df_pff_pocket <- readr::read_rds("data/df_pff_pocket.rds")
 
 filter_to_pocket <- function(tracking_df, pff_pocket_df) {
@@ -12,6 +15,8 @@ filter_to_pocket <- function(tracking_df, pff_pocket_df) {
       by = c("gameId", "playId", "nflId")
     )
 }
+
+calc_dist <- function(x1, x2, y1, y2) sqrt( (x2 - x1)^2 + (y2 - y1)^2 )
 
 
 # foundation of tracking animations ---------------------------------------

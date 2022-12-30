@@ -24,7 +24,7 @@ sorted_pocket_positions <- "C,LG,LT,QB,RG,RT"
 hex_points <- c("QB", "LT", "LG", "C", "RG", "RT")
 ol_positions <- hex_points[-1]
 frame_group_vars <- c("gameId", "playId", "frameId")
-
+def_roles <- c("Coverage", "Pass Rush")
 
 # Read data ---------------------------------------------------------------
 
@@ -67,7 +67,28 @@ df_tracking <- df_tracking %>%
   filter(frameId >= start_frame & frameId <= end_frame) %>%
   ungroup()
 
-skim_tracking <- skimr::skim(df_tracking)
+#skim_tracking <- skimr::skim(df_tracking)
+
+
+# Calculate distances -----------------------------------------------------
+
+df_tracking_dists <- df_tracking %>% 
+  inner_join(
+    select(df_pff, gameId, playId, nflId, pff_positionLinedUp, pff_role, pff_sack), 
+    by = c("gameId", "playId", "nflId")
+  ) %>% 
+  group_by(gameId, playId, frameId) %>% 
+  mutate(across(.cols = c(x,y), .fns = function(z) z[pff_positionLinedUp == "QB"], .names = "{.col}_QB")) %>% 
+  ungroup()
+
+
+df_tracking_dists$dist_to_qb <- calc_dist(
+  x1 = df_tracking_dists$x,
+  y1 = df_tracking_dists$y,
+  x2 = df_tracking_dists$x_QB,
+  y2 = df_tracking_dists$y_QB
+)
+
 
 
 # Calculate pocket size ---------------------------------------------------
@@ -93,8 +114,6 @@ df_pff_pocket <- df_pff %>%
 #   )
 
 df_pocket <- filter_to_pocket(df_tracking, df_pff_pocket)
-
-
 
 
 #filter to only plays with 5 blocking OL and 1 passing QB
@@ -154,28 +173,6 @@ df_pocket <- df_pocket %>%
   inner_join(df_pocket_sizes, by = c("gameId", "playId", "frameId"))
 
 
-# Visualize pocket sizes --------------------------------------------------
-
-#filter to example play, add play description, and standardize coordinates
-
-# df_pocket_example <- df_pocket %>% 
-#   filter(gameId == 2021090900 & playId == 97) %>% #& frameId == 12) %>% 
-#   #filter(gameId == 2021091201 & playId == 2126) %>% #smallest pocket size
-#   inner_join(select(df_plays, gameId, playId, playDescription)) %>% 
-#   std_coords()
-
-df_pocket_example <- prep_example_for_plot(df_pocket, 2021090900, 97)
-
-#define number of frames for animation of given play
-anim_frames <- max(df_pocket_example$frameId)
-
-plot_pocket <- create_pocket_plot(df_pocket_example)
-anim_pocket <- create_pocket_animation(plot_pocket, anim_frames)
-
-#save animation as gif
-#anim_save("output/pocket_size.gif", anim_pocket)   
-
-
 # create additional features ----------------------------------------------
 #summarize at gameId, playId, frameId level
 
@@ -191,7 +188,14 @@ anim_pocket <- create_pocket_animation(plot_pocket, anim_frames)
 
 # join model data set -----------------------------------------------------
 
+
+df_2model_player <- df_tracking_dists %>% 
+  filter(pff_role %in% def_roles) %>% 
+  select(contains("Id"), dist_to_qb, pff_sack)
+
+
 df_2model <- df_pocket_sizes %>% 
   inner_join(select(df_plays, gameId, playId, sack), by = c("gameId", "playId"))
 
-readr::write_rds(df_2model, file.path(data_folder, "df_2model.rds"))
+#readr::write_rds(df_2model, file.path(data_folder, "df_2model.rds"))
+#readr::write_rds(df_2model_player, file.path(data_folder, "df_2model_player.rds"))
