@@ -55,6 +55,11 @@ df_pff %>%
   select(pff_beatenByDefender, pff_hitAllowed, pff_hurryAllowed, pff_sackAllowed) %>% 
   summary()
 
+df_pff <- df_pff %>% 
+  mutate(
+    pressure_allowed = pff_hurryAllowed + pff_hitAllowed + pff_sackAllowed,
+    pressure_delivered = pff_hurry + pff_hit + pff_sack
+  )
 
 # Frames of interest ------------------------------------------------------
 
@@ -68,27 +73,6 @@ df_tracking <- df_tracking %>%
   ungroup()
 
 #skim_tracking <- skimr::skim(df_tracking)
-
-
-# Calculate distances -----------------------------------------------------
-
-df_tracking_dists <- df_tracking %>% 
-  inner_join(
-    select(df_pff, gameId, playId, nflId, pff_positionLinedUp, pff_role, pff_sack), 
-    by = c("gameId", "playId", "nflId")
-  ) %>% 
-  group_by(gameId, playId, frameId) %>% 
-  mutate(across(.cols = c(x,y), .fns = function(z) z[pff_positionLinedUp == "QB"], .names = "{.col}_QB")) %>% 
-  ungroup()
-
-
-df_tracking_dists$dist_to_qb <- calc_dist(
-  x1 = df_tracking_dists$x,
-  y1 = df_tracking_dists$y,
-  x2 = df_tracking_dists$x_QB,
-  y2 = df_tracking_dists$y_QB
-)
-
 
 
 # Calculate pocket size ---------------------------------------------------
@@ -173,6 +157,26 @@ df_pocket <- df_pocket %>%
   inner_join(df_pocket_sizes, by = c("gameId", "playId", "frameId"))
 
 
+# Calculate distances -----------------------------------------------------
+
+df_tracking_dists <- df_tracking %>% 
+  inner_join(
+    select(df_pff, gameId, playId, nflId, pff_positionLinedUp, pff_role, pressure_allowed, pressure_delivered), 
+    by = c("gameId", "playId", "nflId")
+  ) %>% 
+  group_by(gameId, playId, frameId) %>% 
+  mutate(across(.cols = c(x,y), .fns = function(z) z[pff_positionLinedUp == "QB"], .names = "{.col}_QB")) %>% 
+  ungroup()
+
+
+df_tracking_dists$dist_to_qb <- calc_dist(
+  x1 = df_tracking_dists$x,
+  y1 = df_tracking_dists$y,
+  x2 = df_tracking_dists$x_QB,
+  y2 = df_tracking_dists$y_QB
+)
+
+
 # create additional features ----------------------------------------------
 #summarize at gameId, playId, frameId level
 
@@ -186,6 +190,43 @@ df_pocket <- df_pocket %>%
 #position of rusher, blockers - DL v LB, etc. OL vs RB vs TE, etc.
 
 
+
+# Prep plays data ---------------------------------------------------------
+
+off_personnels <- keep_cats(df_plays, "personnelO", 0.9)
+def_personnels <- keep_cats(df_plays, "personnelD", 0.9)
+
+
+
+df_plays_wrangled <- df_plays %>% 
+  filter(is.na(foulName1)) %>% 
+  filter(dropBackType != "UNKNOWN" & dropBackType != "DESIGNED_RUN") %>% 
+  filter(offenseFormation != "WILDCAT") %>% 
+  #filter(quarter <= xxx) %>% 
+  filter(down != 0) %>% 
+  #filter(yardsToGo <= xxx) %>% 
+  mutate(
+    off_personnel = ifelse(personnelO %in% off_personnels, personnelO, "Other"),
+    def_personnel = ifelse(personnelD %in% def_personnels, personnelD, "Other")
+  ) %>% 
+  mutate(
+    dropBackCategory = case_when(
+      str_detect(dropBackType, "DESIGNED_ROLLOUT") ~ "rollout",
+      str_detect(dropBackType, "SCRAMBLE") ~ "scramble",
+      TRUE ~ "traditional"
+    )
+  ) %>% 
+  mutate(coverage = ifelse(pff_passCoverageType == "Other", "Other", pff_passCoverage)) %>% 
+  mutate(yards_to_endzone = absoluteYardlineNumber - 10) %>% 
+  select(
+    gameId, playId,
+    offenseFormation, personnelO, personnelD, dropBackType, pff_passCoverage, pff_passCoverageType,
+    quarter, down, yardsToGo, absoluteYardlineNumber, defendersInBox, pff_playAction
+  )
+
+
+  
+  
 # join model data set -----------------------------------------------------
 
 

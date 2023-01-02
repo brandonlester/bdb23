@@ -18,6 +18,16 @@ filter_to_pocket <- function(tracking_df, pff_pocket_df) {
 
 calc_dist <- function(x1, x2, y1, y2) sqrt( (x2 - x1)^2 + (y2 - y1)^2 )
 
+keep_cats <- function(df, cat, pct) {
+  df %>% 
+    count(!!as.name(cat), sort = TRUE) %>% 
+    mutate(total_plays = nrow(df)) %>% 
+    mutate(npct = n / total_plays) %>% 
+    mutate(npct_cumsum = cumsum(npct)) %>% 
+    filter(npct_cumsum <= pct) %>% 
+    pull(!!as.name(cat))
+}
+
 
 # foundation of tracking animations ---------------------------------------
 
