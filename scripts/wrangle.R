@@ -184,18 +184,26 @@ df_tracking_dists$dist_to_qb <- calc_dist(
 #distance from each defender to QB, to each other
 #distance from each pass blocker to QB, to each other
 #s, a, dis, o of QB, rushers, blockers
-#QB distance from sideline
+
 #defenders to receivers - maybe just most open receiver
 #number of rushers, blockers
 #position of rusher, blockers - DL v LB, etc. OL vs RB vs TE, etc.
 
+y_max <- 53.3
+y_max/2
 
+df_tracking_dists %>% 
+  #QB distance from sideline
+  mutate(qb_to_sideline = ifelse(y_QB > y_max/2, y_max - y_QB, y_QB)) %>% 
+  inner_join(select(df_plays, gameId, playId, possessionTeam), by = c("gameId", "playId")) %>% 
+  mutate(side_of_ball = ifelse(team == possessionTeam, "off", "def")) %>% 
+  
+  
 
 # Prep plays data ---------------------------------------------------------
 
 off_personnels <- keep_cats(df_plays, "personnelO", 0.9)
 def_personnels <- keep_cats(df_plays, "personnelD", 0.9)
-
 
 
 df_plays_wrangled <- df_plays %>% 
@@ -223,7 +231,6 @@ df_plays_wrangled <- df_plays %>%
     offenseFormation, personnelO, personnelD, dropBackType, pff_passCoverage, pff_passCoverageType,
     quarter, down, yardsToGo, absoluteYardlineNumber, defendersInBox, pff_playAction
   )
-
 
   
   
