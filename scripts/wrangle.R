@@ -159,8 +159,9 @@ df_pocket <- df_pocket %>%
 
 # Calculate distances -----------------------------------------------------
 
+#join pff and add QB coordinate columns
 df_tracking_dists <- df_tracking %>% 
-  inner_join(
+  inner_join( #removes football
     select(df_pff, gameId, playId, nflId, pff_positionLinedUp, pff_role, pressure_allowed, pressure_delivered), 
     by = c("gameId", "playId", "nflId")
   ) %>% 
@@ -168,13 +169,58 @@ df_tracking_dists <- df_tracking %>%
   mutate(across(.cols = c(x,y), .fns = function(z) z[pff_positionLinedUp == "QB"], .names = "{.col}_QB")) %>% 
   ungroup()
 
-
+#calc distance from QB for all players in every frame
 df_tracking_dists$dist_to_qb <- calc_dist(
   x1 = df_tracking_dists$x,
   y1 = df_tracking_dists$y,
   x2 = df_tracking_dists$x_QB,
   y2 = df_tracking_dists$y_QB
 )
+
+
+
+
+
+
+
+#get all 44 coordinates onto every row
+# system.time(
+#   df_coords <- get_player_coords_1(df_tracking_dists)
+# )
+# readr::write_rds(df_coords, file.path(data_folder, "df_coords.rds"))
+
+df_coords <- readr::read_rds(file.path(data_folder, "df_coords.rds"))
+
+
+
+#using all coordinates to calculate distances from every player
+for(i in 1:22) {
+  i_dists <- calc_dist(
+    x1 = df_coords[["x"]],
+    y1 = df_coords[["y"]],
+    x2 = df_coords[[paste0("x",i)]],
+    y2 = df_coords[[paste0("y",i)]]
+  )
+  
+  df_coords[[paste0("dist_from_", i)]] <- i_dists
+}
+
+xc_names <- names(df_coords)[grep("x[0-9]{1,2}", names(df_coords))]
+yc_names <- names(df_coords)[grep("y[0-9]{1,2}", names(df_coords))]
+
+df_tracking_dists <- df_coords %>% 
+  select(-all_of(c(xc_names, yc_names)))
+
+df_coords <- df_coords %>% 
+  select(contains("Id"), all_of(c(xc_names, yc_names)))
+
+
+
+
+
+
+
+
 
 
 # create additional features ----------------------------------------------
@@ -196,7 +242,7 @@ df_tracking_dists %>%
   #QB distance from sideline
   mutate(qb_to_sideline = ifelse(y_QB > y_max/2, y_max - y_QB, y_QB)) %>% 
   inner_join(select(df_plays, gameId, playId, possessionTeam), by = c("gameId", "playId")) %>% 
-  mutate(side_of_ball = ifelse(team == possessionTeam, "off", "def")) %>% 
+  mutate(side_of_ball = ifelse(team == possessionTeam, "off", "def"))
   
   
 
@@ -236,14 +282,14 @@ df_plays_wrangled <- df_plays %>%
   
 # join model data set -----------------------------------------------------
 
-
-df_2model_player <- df_tracking_dists %>% 
-  filter(pff_role %in% def_roles) %>% 
-  select(contains("Id"), dist_to_qb, pff_sack)
-
-
-df_2model <- df_pocket_sizes %>% 
-  inner_join(select(df_plays, gameId, playId, sack), by = c("gameId", "playId"))
+# 
+# df_2model_player <- df_tracking_dists %>% 
+#   filter(pff_role %in% def_roles) %>% 
+#   select(contains("Id"), dist_to_qb, pff_sack)
+# 
+# 
+# df_2model <- df_pocket_sizes %>% 
+#   inner_join(select(df_plays, gameId, playId, sack), by = c("gameId", "playId"))
 
 #readr::write_rds(df_2model, file.path(data_folder, "df_2model.rds"))
 #readr::write_rds(df_2model_player, file.path(data_folder, "df_2model_player.rds"))

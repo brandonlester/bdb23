@@ -28,6 +28,88 @@ keep_cats <- function(df, cat, pct) {
     pull(!!as.name(cat))
 }
 
+# frame_coords <- function(df, x_or_y) {
+#   df_temp <- df %>%
+#     select(playerId, !!as.name(x_or_y)) %>%
+#     mutate(playerId = paste0(x_or_y, as.character(playerId))) %>%
+#     t() %>%
+#     as.data.frame()
+# 
+#   names(df_temp) <- df_temp[1,]
+#   df_temp[2,]
+# }
+
+
+get_player_coords_1 <- function(df) {
+  #elapsed 46.95
+  df %>% 
+    group_by(gameId, playId, frameId) %>%
+    mutate(playerId = dplyr::row_number()) %>%
+    mutate(
+      x1 = x[playerId == 1],
+      x2 = x[playerId == 2],
+      x3 = x[playerId == 3],
+      x4 = x[playerId == 4],
+      x5 = x[playerId == 5],
+      x6 = x[playerId == 6],
+      x7 = x[playerId == 7],
+      x8 = x[playerId == 8],
+      x9 = x[playerId == 9],
+      x10 = x[playerId == 10],
+      x11 = x[playerId == 11],
+      x12 = x[playerId == 12],
+      x13 = x[playerId == 13],
+      x14 = x[playerId == 14],
+      x15 = x[playerId == 15],
+      x16 = x[playerId == 16],
+      x17 = x[playerId == 17],
+      x18 = x[playerId == 18],
+      x19 = x[playerId == 19],
+      x20 = x[playerId == 20],
+      x21 = x[playerId == 21],
+      x22 = x[playerId == 22],
+    ) %>% 
+    mutate(
+      y1 = y[playerId == 1],
+      y2 = y[playerId == 2],
+      y3 = y[playerId == 3],
+      y4 = y[playerId == 4],
+      y5 = y[playerId == 5],
+      y6 = y[playerId == 6],
+      y7 = y[playerId == 7],
+      y8 = y[playerId == 8],
+      y9 = y[playerId == 9],
+      y10 = y[playerId == 10],
+      y11 = y[playerId == 11],
+      y12 = y[playerId == 12],
+      y13 = y[playerId == 13],
+      y14 = y[playerId == 14],
+      y15 = y[playerId == 15],
+      y16 = y[playerId == 16],
+      y17 = y[playerId == 17],
+      y18 = y[playerId == 18],
+      y19 = y[playerId == 19],
+      y20 = y[playerId == 20],
+      y21 = y[playerId == 21],
+      y22 = y[playerId == 22],
+    ) %>% 
+    ungroup()
+}
+
+get_player_coords_2 <- function(df) {
+  #elapsed 54.68
+  df_grp <- df %>% 
+    group_by(gameId, playId, frameId) %>% 
+    mutate(playerId = dplyr::row_number())
+  
+  for(i in 1:22) df_grp <- df_grp %>% mutate("x{i}" := x[playerId == i])
+  for(i in 1:22) df_grp <- df_grp %>% mutate("y{i}" := y[playerId == i])
+  
+  return(ungroup(df_grp))
+}
+
+
+
 
 # foundation of tracking animations ---------------------------------------
 
