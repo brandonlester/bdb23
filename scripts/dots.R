@@ -43,8 +43,8 @@ keep_cats <- function(df, cat, pct) {
 get_player_coords_1 <- function(df) {
   #elapsed 46.95
   df %>% 
+    select(contains("Id"), x, y) %>% 
     group_by(gameId, playId, frameId) %>%
-    mutate(playerId = dplyr::row_number()) %>%
     mutate(
       x1 = x[playerId == 1],
       x2 = x[playerId == 2],
@@ -99,6 +99,7 @@ get_player_coords_1 <- function(df) {
 get_player_coords_2 <- function(df) {
   #elapsed 54.68
   df_grp <- df %>% 
+    select(contains("Id"), x, y) %>% 
     group_by(gameId, playId, frameId) %>% 
     mutate(playerId = dplyr::row_number())
   
@@ -108,6 +109,24 @@ get_player_coords_2 <- function(df) {
   return(ungroup(df_grp))
 }
 
+
+get_data_on_pid <- function(df, get_vars) {
+  
+  df_grp <- df %>% group_by(gameId, playId, frameId)
+  
+  for(i in 1:22) {
+    df_grp <- df_grp %>% 
+      mutate(
+        across(
+          .cols = all_of(get_vars), 
+          .fns = ~.x[playerId == i], 
+          .names = paste("{col}", i, sep = "_")
+        )
+      )
+  }
+  
+  return(ungroup(df_grp))
+}
 
 
 
