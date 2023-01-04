@@ -260,6 +260,36 @@ readr::write_rds(df_tracknest, "data/df_tracknest.rds")
 readr::write_rds(dist_list, "data/dist_list.rds")
 readr::write_rds(dist_list_tidy, "data/dist_list_tidy.rds")
 
+df_tracknest$dists <- dist_list_tidy
+
+df_track_unnest <- unnest(df_tracknest, cols = c(data))
+df_track_pids <- df_track_unnest %>% select(-dists, -x, -y)
+
+
+df_track_pids <- df_tracking %>% inner_join(df_track_pids, by = c("gameId", "playId", "frameId", "nflId"))
+
+df_track_pids_joined <- df_track_pids %>% 
+  inner_join(select(df_plays, gameId, playId, possessionTeam), by = c("gameId", "playId")) %>% 
+  mutate(side_of_ball = ifelse(team == possessionTeam, "o", "d")) %>% 
+  inner_join(select(df_pff, contains("Id"), contains("pressure"), pff_positionLinedUp, pff_role), by = c("gameId", "playId", "nflId"))
+
+df_track_dists_unnest <- df_tracknest %>% unnest(cols=c(dists)) %>% select(-data)
+
+#TODO - start here
+df_track_dists_unnest %>% 
+  inner_join(
+    df_track_pids_joined %>% select(gameId, playId, frameId, playerId, side_of_ball),
+    by = c("gameId", "playId", "frameId", "playerId")
+  )
+
+
+
+
+
+
+
+
+
 
 
 #join pff and add QB coordinate columns
@@ -329,8 +359,6 @@ df_tracking_dists <- df_coords %>%
 df_coords <- df_coords %>% 
   select(contains("Id"), all_of(c(xc_names, yc_names)))
 
-
-df_tracking
 
 
 # create additional features ----------------------------------------------
