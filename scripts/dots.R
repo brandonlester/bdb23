@@ -130,6 +130,31 @@ get_data_on_pid <- function(df, get_vars) {
 
 
 
+# distance functions ------------------------------------------------------
+
+calc_frame_dists <- function(iframe) {
+  require(distances)
+  iframe %>% 
+    select(x,y) %>% 
+    as.matrix() %>% 
+    distances::distances() 
+}
+
+tidy_frame_dists <- function(iframedists) {
+  iframedists %>%
+    distances::distance_columns(1:23) %>%  
+    as.data.frame() %>%
+    rownames_to_column(var = "playerId") %>%
+    mutate(playerId = as.integer(playerId)) %>%
+    pivot_longer(-playerId, names_to = "otherplayerId", values_to = "dist") %>%
+    mutate(otherplayerId = as.integer(otherplayerId)) %>% 
+    as.data.frame()
+}
+
+get_dist <- function(frame_dists, pid1, pid2) as.numeric(distances::distance_columns(frame_dists, pid1, pid2))
+
+
+
 # foundation of tracking animations ---------------------------------------
 
 base_field_plot <- function(yard_start=0, yard_end=122) {

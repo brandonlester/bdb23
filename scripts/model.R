@@ -30,32 +30,131 @@ pred_func <- function(object, newdata) {
 
 # Read data ---------------------------------------------------------------
 
-df_2model <- readr::read_rds(file.path(data_folder, "df_2model.rds"))
+#df_2model <- readr::read_rds(file.path(data_folder, "df_2model.rds"))
 
-
+df_block_2model <- readr::read_rds(file.path(data_folder, "df_block_2model.rds"))
+df_rush_2model <- readr::read_rds(file.path(data_folder, "df_rush_2model.rds"))
 
 # Summarise data ----------------------------------------------------------
 
-skimr::skim(df_2model)
-mean(df_2model$sack)
-hist(df_2model$pocket_size)
+skim_block <- skimr::skim(df_block_2model)
+skim_rush <- skimr::skim(df_rush_2model)
+
+feature_names <- c(
+  #"gameId", 
+  #"playId",
+  #"nflId",
+  #"frameId",
+  #"time", 
+  #"jerseyNumber",
+  #"team",
+  #"playDirection",
+  #"x", #TODO???
+  #"y", #TODO???
+  #"s", #TODO???
+  #"a", #TODO???
+  #"dis", #TODO???
+  #"o", #TODO???
+  #"dir", #TODO???
+  #"event",
+  #"start_frame",
+  #"end_frame",
+  #"playerId",
+  #"possessionTeam",
+  #"side_of_ball",
+  #"pff_nflIdBlockedPlayer",
+  #"pressure_allowed",
+  #"pressure_delivered",
+  #"pff_positionLinedUp", #TODO???
+  #"pff_role",
+  #"near_oppo_pid",
+  #"near_oppo_nflId",
+  "near_oppo_dist",
+  #"other_near_oppo_nflId",
+  #"x_QB",
+  #"y_QB",
+  "dist_to_qb",
+  "most_open_rec",
+  "num_blockers",
+  "num_rushers",
+  "qb_to_sideline",
+  "frames_from_start",
+  "offenseFormation",
+  "off_personnel",
+  "def_personnel",
+  "dropBackCategory",
+  "coverage",
+  "quarter",
+  "down",
+  "yardsToGo",
+  "yards_to_endzone",
+  "defendersInBox",
+  "pff_playAction",
+  "pocket_size"
+)
+
+
+
 
 
 # Split data --------------------------------------------------------------
 
-#stratify based on sack so proportion of occurences similar in train and test splits
-data_split <- rsample::initial_split(df_2model, prop = 0.75, strata = "sack")
-df_train <- rsample::training(data_split)
-df_test <- rsample::testing(data_split)
+model_list <- list(
+  block = list(
+    df_all = df_block_2model,
+    target = "pressure_allowed"
+  ),
+  rush = list(
+    df_all = df_rush_2model,
+    target = "pressure_delivered"
+  )
+)
+rm(df_block_2model)
+rm(df_rush_2model)
 
-#verify stratification
-mean(df_train$sack)
-mean(df_test$sack)
 
+create_formula <- function(target) as.formula(paste(paste0(target, " ~ "), paste(feature_names, collapse= "+")))
+
+model_list$block$formula <- create_formula(model_list$block$target)
+model_list$rush$formula <- create_formula(model_list$rush$target)
+
+
+
+split_data <- function(df, pct, target) {
+  require(rsample)
+  ds <- initial_split(df, prop = pct, strata = target)
+  return(list(trn = training(ds), tst = testing(ds)))
+}
+
+ds_block <- split_data(model_list$block$df_all, 0.75, model_list$block$target)
+model_list$block$df_train <- ds_block[["trn"]]
+model_list$block$df_test <- ds_block[["tst"]]
+rm(ds_block)
+
+ds_rush <- split_data(model_list$rush$df_all, 0.75, model_list$rush$target)
+model_list$rush$df_train <- ds_rush[["trn"]]
+model_list$rush$df_test <- ds_rush[["tst"]]
+rm(ds_rush)
 
 # Model training ----------------------------------------------------------
 
-#create vector of featrue cols then create formula
+# system.time(
+#   model_list$block$rf0 <- ranger::ranger(model_list$block$formula, data = model_list$block$df_train, probability = TRUE)
+# ) #elapsed 475.89
+# 
+# system.time(
+#   model_list$rush$rf0 <- ranger::ranger(model_list$rush$formula, data = model_list$rush$df_train, probability = TRUE)
+# ) #elapsed 375.97
+# 
+# readr::write_rds(model_list, "data/model_list.rds")
+
+#TODO - remove df_all since already have trn and test then re-write
+model_list <- readr::read_rds("data/model_list.rds")
+
+
+
+
+
 
 # #train base random forest model
 rf0 <- ranger::ranger(sack ~ pocket_size, data = df_train, probability = TRUE)

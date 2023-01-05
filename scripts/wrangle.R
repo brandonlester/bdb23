@@ -73,8 +73,8 @@ df_plays_wrangled <- df_plays %>%
   mutate(yards_to_endzone = absoluteYardlineNumber - 10) %>% 
   select(
     gameId, playId,
-    offenseFormation, personnelO, personnelD, dropBackType, pff_passCoverage, pff_passCoverageType,
-    quarter, down, yardsToGo, absoluteYardlineNumber, defendersInBox, pff_playAction
+    offenseFormation, off_personnel, def_personnel, dropBackCategory, coverage,
+    quarter, down, yardsToGo, yards_to_endzone, defendersInBox, pff_playAction
   )
 
 
@@ -189,175 +189,192 @@ df_pocket <- df_pocket %>%
   ungroup()
 
 
-# Calculate distances -----------------------------------------------------
 
+# Archive previous distance calc method -----------------------------------
 
-# i<-1
-# df_tracking %>% 
-#   select(contains("Id"), x, y) %>% 
+# df_tracking_dists <- df_tracking_dists %>% 
 #   group_by(gameId, playId, frameId) %>% 
 #   mutate(playerId = dplyr::row_number()) %>% 
-#   summarise(
-#     "x{i}" := x[playerId == i],
-#     nflId = nflId[playerId == i]
+#   ungroup()
+# 
+# system.time(
+#   df_tracking_dists <- get_data_on_pid(df_tracking_dists, c("x", "y"))
+# )
+# 
+# # coord_names <- names(df_tracking_dists)[grep("[x_y_][0-9]{1,2}", names(df_tracking_dists))]
+# # 
+# # df_tracking_dists %>% 
+# #   tidyr::nest(data = any_of(coord_names))
+# 
+# #get all 44 coordinates onto every row
+# system.time(
+#   df_coords <- get_player_coords_1(df_tracking_dists)
+# )
+# readr::write_rds(df_coords, file.path(data_folder, "df_coords.rds"))
+# 
+# df_coords <- readr::read_rds(file.path(data_folder, "df_coords.rds"))
+# 
+# df_tracking_dists %>% 
+#   inner_join(df_coords, by = c("gameId", ""))
+# 
+# #using all coordinates to calculate distances from every player
+# for(i in 1:22) {
+#   i_dists <- calc_dist(
+#     x1 = df_coords[["x"]],
+#     y1 = df_coords[["y"]],
+#     x2 = df_coords[[paste0("x",i)]],
+#     y2 = df_coords[[paste0("y",i)]]
 #   )
+#   
+#   df_coords[[paste0("dist_from_", i)]] <- i_dists
+# }
+# 
+# xc_names <- names(df_coords)[grep("x[0-9]{1,2}", names(df_coords))]
+# yc_names <- names(df_coords)[grep("y[0-9]{1,2}", names(df_coords))]
+# 
+# df_tracking_dists <- df_coords %>% 
+#   select(-all_of(c(xc_names, yc_names)))
+# 
+# df_coords <- df_coords %>% 
+#   select(contains("Id"), all_of(c(xc_names, yc_names)))
 
 
-df_tracknest <- df_tracking %>% 
-  select(contains("Id"), x, y) %>% 
-  arrange(gameId, playId, frameId, nflId) %>% 
-  group_by(gameId, playId, frameId) %>% 
-  mutate(playerId = dplyr::row_number()) %>% 
-  tidyr::nest() %>% 
-  ungroup()
+
+# df_tracking_sob <- df_tracking_dists %>%
+#   inner_join(select(df_plays, gameId, playId, possessionTeam), by = c("gameId", "playId")) %>% 
+#   mutate(side_of_ball = ifelse(team == possessionTeam, "off", "def"))
+# 
+# 
+# df_tracking_multisob <- get_data_on_pid(df_tracking_sob, "side_of_ball")
+# 
+# 
+# # df_sob_ids <- df_tracking_sob %>% 
+# #   group_by(gameId, playId, frameId) %>% 
+# #   summarise(
+# #     off_pids = list(playerId[side_of_ball == "off"]),
+# #     def_pids = list(playerId[side_of_ball == "def"])
+# #   ) %>% 
+# #   ungroup()
 
 
-calc_frame_dists <- function(iframe) {
-  require(distances)
-  iframe %>% 
-    select(x,y) %>% 
-    as.matrix() %>% 
-    distances::distances() 
-}
-
-tidy_frame_dists <- function(iframedists) {
-  iframedists %>%
-    distances::distance_columns(1:23) %>%  
-    as.data.frame() %>%
-    rownames_to_column(var = "playerId") %>%
-    mutate(playerId = as.integer(playerId)) %>%
-    pivot_longer(-playerId, names_to = "otherplayerId", values_to = "dist") %>%
-    mutate(otherplayerId = as.integer(otherplayerId)) %>% 
-    as.data.frame()
-}
-
-get_dist <- function(frame_dists, pid1, pid2) as.numeric(distances::distance_columns(frame_dists, pid1, pid2))
-
-frame1 <- df_tracknest$data[[1]]
-frame1_dists <- calc_frame_dists(frame1)
-frame1_dists_tidy <- tidy_frame_dists(frame1_dists)
-
-utils::object.size(frame1_dists)
-utils::object.size(frame1_dists_tidy)
-
-#distance between player 1 and player 9 in the given frame
-get_dist(frame1_dists, 1, 9)
-
-system.time(
-  dist_list <- furrr::future_map(df_tracknest$data, calc_frame_dists)
-) 
-#elapsed 622.52 when df_tracknest was 274,919 rows
-#elapsed 559.45 when df_tracknest was 246,321 rows
-
-#print(object.size(dist_list), units = "Gb")
-
-system.time(
-  dist_list_tidy <- furrr::future_map(dist_list, tidy_frame_dists)
-)
-#elapsed 1757.97 when df_tracknest was 246,321 rows
-
-readr::write_rds(df_tracknest, "data/df_tracknest.rds")
-readr::write_rds(dist_list, "data/dist_list.rds")
-readr::write_rds(dist_list_tidy, "data/dist_list_tidy.rds")
-
-df_tracknest$dists <- dist_list_tidy
-
-df_track_unnest <- unnest(df_tracknest, cols = c(data))
-df_track_pids <- df_track_unnest %>% select(-dists, -x, -y)
 
 
-df_track_pids <- df_tracking %>% inner_join(df_track_pids, by = c("gameId", "playId", "frameId", "nflId"))
 
-df_track_pids_joined <- df_track_pids %>% 
+# Calculate distances -----------------------------------------------------
+
+# #create and write nested tracking with distances data frame
+# df_tracknest <- df_tracking %>% 
+#   select(contains("Id"), x, y) %>% 
+#   arrange(gameId, playId, frameId, nflId) %>% 
+#   group_by(gameId, playId, frameId) %>% 
+#   mutate(playerId = dplyr::row_number()) %>% 
+#   tidyr::nest() %>% 
+#   ungroup()
+# 
+# system.time(
+#   dist_list <- furrr::future_map(df_tracknest$data, calc_frame_dists)
+# ) 
+# #elapsed 622.52 when df_tracknest was 274,919 rows
+# #elapsed 559.45 when df_tracknest was 246,321 rows
+# 
+# system.time(
+#   dist_list_tidy <- furrr::future_map(dist_list, tidy_frame_dists)
+# )
+# #elapsed 1757.97 when df_tracknest was 246,321 rows
+# 
+# df_tracknest$dists <- dist_list_tidy
+# 
+# readr::write_rds(df_tracknest, "data/df_tracknest.rds")
+
+# ready nested tracking with distances data frame
+df_tracknest <- readr::read_rds("data/df_tracknest.rds")
+df_tracknest_2frames <- head(df_tracknest, 2)
+
+#add player Ids to main tracking data
+df_pids <- unnest(df_tracknest, cols = c(data))
+df_pids <- df_pids %>% select(-dists, -x, -y)
+df_tracking <- df_tracking %>% inner_join(df_pids, by = c("gameId", "playId", "frameId", "nflId"))
+rm(df_pids)
+
+
+df_tracking <- df_tracking %>% 
   inner_join(select(df_plays, gameId, playId, possessionTeam), by = c("gameId", "playId")) %>% 
   mutate(side_of_ball = ifelse(team == possessionTeam, "o", "d")) %>% 
+  #removes ball
   inner_join(select(df_pff, contains("Id"), contains("pressure"), pff_positionLinedUp, pff_role), by = c("gameId", "playId", "nflId"))
 
-df_track_dists_unnest <- df_tracknest %>% unnest(cols=c(dists)) %>% select(-data)
 
-#TODO - start here
-df_track_dists_unnest %>% 
-  inner_join(
-    df_track_pids_joined %>% select(gameId, playId, frameId, playerId, side_of_ball),
-    by = c("gameId", "playId", "frameId", "playerId")
-  )
+# df_track_sob <- df_tracking %>% select(contains("Id"), side_of_ball) %>% select(-pff_nflIdBlockedPlayer)
+# #run on the whole df
+# system.time(
+#   df_nearoppo <- df_tracknest %>% 
+#     unnest(cols = dists) %>% 
+#     select(-data) %>% 
+#     filter(playerId != otherplayerId) %>% 
+#     inner_join(
+#       df_track_sob, 
+#       by = c("gameId", "playId", "frameId", "playerId")
+#     ) %>% 
+#     inner_join(
+#       df_track_sob, 
+#       by = c("gameId", "playId", "frameId", "otherplayerId" = "playerId"), 
+#       suffix = c("", "_other")
+#     ) %>% 
+#     filter(side_of_ball != side_of_ball_other) %>% 
+#     group_by(gameId, playId, frameId, playerId) %>% 
+#     summarise(
+#       near_oppo_pid = otherplayerId[dist == min(dist)],
+#       near_oppo_nflId = nflId_other[dist == min(dist)],
+#       near_oppo_dist = min(dist)
+#     ) %>% 
+#     ungroup()
+# ) #elapsed 306.88
+# 
+# system.time(readr::write_rds(df_nearoppo, "data/df_nearoppo.rds")) #elapsed 0.81
 
+df_nearoppo <- readr::read_rds(df_nearoppo, "data/df_nearoppo.rds")
 
+df_tracking <- df_tracking %>% inner_join(df_nearoppo, by = c("gameId", "playId", "frameId", "playerId"))
 
-
-
-
-
+#create column for few instances where player same distance from 2 opposing players
+#then filter to lower nflId number - arbitrary
+df_tracking <- df_tracking %>% 
+  group_by(gameId, playId, frameId, playerId) %>% 
+  mutate(other_near_oppo_nflId = ifelse(n() > 1, max(near_oppo_nflId), NA)) %>% 
+  filter(near_oppo_nflId == min(near_oppo_nflId)) %>% 
+  ungroup()
 
 
 
 
 #join pff and add QB coordinate columns
-df_tracking_dists <- df_tracking %>% 
-  inner_join( #removes football
-    select(df_pff, gameId, playId, nflId, pff_positionLinedUp, pff_role, pressure_allowed, pressure_delivered), 
-    by = c("gameId", "playId", "nflId")
-  ) %>% 
+df_tracking <- df_tracking %>% 
   group_by(gameId, playId, frameId) %>% 
   mutate(across(.cols = c(x,y), .fns = function(z) z[pff_positionLinedUp == "QB"], .names = "{.col}_QB")) %>% 
   ungroup()
 
 #calc distance from QB for all players in every frame
-df_tracking_dists$dist_to_qb <- calc_dist(
-  x1 = df_tracking_dists$x,
-  y1 = df_tracking_dists$y,
-  x2 = df_tracking_dists$x_QB,
-  y2 = df_tracking_dists$y_QB
+df_tracking$dist_to_qb <- calc_dist(
+  x1 = df_tracking$x,
+  y1 = df_tracking$y,
+  x2 = df_tracking$x_QB,
+  y2 = df_tracking$y_QB
 )
 
-df_tracking_dists <- df_tracking_dists %>% 
+y_max <- 53.3
+
+#additional features
+df_tracking <- df_tracking %>% 
   group_by(gameId, playId, frameId) %>% 
-  mutate(playerId = dplyr::row_number()) %>% 
-  ungroup()
+  mutate(
+    most_open_rec = min(near_oppo_dist[pff_role == "Pass Route"]),
+    num_blockers = length(nflId[pff_role == "Pass Block"]),
+    num_rushers = length(nflId[pff_role == "Pass Rush"])
+  ) %>% 
+  ungroup() %>% 
+  mutate(qb_to_sideline = ifelse(y_QB > y_max/2, y_max - y_QB, y_QB)) %>% 
+  mutate(frames_from_start = frameId - start_frame)
 
-system.time(
-  df_tracking_dists <- get_data_on_pid(df_tracking_dists, c("x", "y"))
-)
-
-# coord_names <- names(df_tracking_dists)[grep("[x_y_][0-9]{1,2}", names(df_tracking_dists))]
-# 
-# df_tracking_dists %>% 
-#   tidyr::nest(data = any_of(coord_names))
-
-
-
-
-#get all 44 coordinates onto every row
-system.time(
-  df_coords <- get_player_coords_1(df_tracking_dists)
-)
-readr::write_rds(df_coords, file.path(data_folder, "df_coords.rds"))
-
-df_coords <- readr::read_rds(file.path(data_folder, "df_coords.rds"))
-
-df_tracking_dists %>% 
-  inner_join(df_coords, by = c("gameId", ""))
-
-#using all coordinates to calculate distances from every player
-for(i in 1:22) {
-  i_dists <- calc_dist(
-    x1 = df_coords[["x"]],
-    y1 = df_coords[["y"]],
-    x2 = df_coords[[paste0("x",i)]],
-    y2 = df_coords[[paste0("y",i)]]
-  )
-  
-  df_coords[[paste0("dist_from_", i)]] <- i_dists
-}
-
-xc_names <- names(df_coords)[grep("x[0-9]{1,2}", names(df_coords))]
-yc_names <- names(df_coords)[grep("y[0-9]{1,2}", names(df_coords))]
-
-df_tracking_dists <- df_coords %>% 
-  select(-all_of(c(xc_names, yc_names)))
-
-df_coords <- df_coords %>% 
-  select(contains("Id"), all_of(c(xc_names, yc_names)))
 
 
 
@@ -373,33 +390,43 @@ df_coords <- df_coords %>%
 #number of rushers, blockers
 #position of rusher, blockers - DL v LB, etc. OL vs RB vs TE, etc.
 
-# y_max <- 53.3
-# y_max/2
-# #QB distance from sideline
-# mutate(qb_to_sideline = ifelse(y_QB > y_max/2, y_max - y_QB, y_QB))
 
-df_tracking_sob <- df_tracking_dists %>%
-  inner_join(select(df_plays, gameId, playId, possessionTeam), by = c("gameId", "playId")) %>% 
-  mutate(side_of_ball = ifelse(team == possessionTeam, "off", "def"))
+# assemble data to model --------------------------------------------------
 
 
-df_tracking_multisob <- get_data_on_pid(df_tracking_sob, "side_of_ball")
+skim_tracking <- skimr::skim(df_tracking)
+skim_plays <- skimr::skim(df_plays_wrangled)
+
+df_joined <- df_tracking %>% 
+  inner_join(df_plays_wrangled, by = c("gameId", "playId")) %>%
+  inner_join(df_pocket, by = c("gameId", "playId", "frameId"))
 
 
-# df_sob_ids <- df_tracking_sob %>% 
-#   group_by(gameId, playId, frameId) %>% 
-#   summarise(
-#     off_pids = list(playerId[side_of_ball == "off"]),
-#     def_pids = list(playerId[side_of_ball == "def"])
-#   ) %>% 
-#   ungroup()
+df_block_2model <- df_joined %>% filter(pff_role == "Pass Block")
+
+all(sum(is.na(df_block_2model$pressure_allowed)) == 0,
+    sum(!is.na(df_block_2model$pressure_delivered)) == 0)
+
+
+df_rush_2model <- df_joined %>% filter(pff_role == "Pass Rush")
+
+all(sum(!is.na(df_rush_2model$pressure_allowed)) == 0,
+    sum(is.na(df_rush_2model$pressure_delivered)) == 0)
+
+
+readr::write_rds(df_block_2model, "data/df_block_2model.rds")
+readr::write_rds(df_rush_2model, "data/df_rush_2model.rds")
+
+#IDEA*****
+#diff of overall play prob and sum/avg/etc of individual player starting probs?
+#this diff at each frame?
+#measure of default prob in a situation and the players/team that increase/decrease chances due to skill/play/technique
+
+#IDEA****
+#frame by frame pressure allowed vs delivered probabilities for blockers and attached rushers
 
 
 
-
-  
-  
-# join model data set -----------------------------------------------------
 
 # 
 # df_2model_player <- df_tracking_dists %>% 
