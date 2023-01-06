@@ -417,13 +417,6 @@ all(sum(!is.na(df_rush_2model$pressure_allowed)) == 0,
 readr::write_rds(df_block_2model, "data/df_block_2model.rds")
 readr::write_rds(df_rush_2model, "data/df_rush_2model.rds")
 
-#IDEA*****
-#diff of overall play prob and sum/avg/etc of individual player starting probs?
-#this diff at each frame?
-#measure of default prob in a situation and the players/team that increase/decrease chances due to skill/play/technique
-
-#IDEA****
-#frame by frame pressure allowed vs delivered probabilities for blockers and attached rushers
 
 
 

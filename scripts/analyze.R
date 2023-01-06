@@ -4,6 +4,21 @@
 #
 ########################################
 
+# IDEAS -------------------------------------------------------------------
+
+#biggest swings in sack prob from frame to frame, start to end of play
+#prob from snap to result - players overcoming situation on either off or def side
+#probs by defenders in box, num rushers, coverage, formation, down linemen, by features
+
+#IDEA*****
+#diff of overall play prob and sum/avg/etc of individual player starting probs?
+#this diff at each frame?
+#measure of default prob in a situation and the players/team that increase/decrease chances due to skill/play/technique
+
+#IDEA****
+#frame by frame pressure allowed vs delivered probabilities for blockers and attached rushers
+
+
 
 # Libraries ---------------------------------------------------------------
 
@@ -13,12 +28,10 @@ source("scripts/dots.R")
 library(kableExtra)
 
 
-
 # Constants ---------------------------------------------------------------
 
 data_folder <- "data"
 output_folder <- "output"
-
 ol_positions <- hex_points[-1]
 
 # Functions ---------------------------------------------------------------
