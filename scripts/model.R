@@ -28,6 +28,63 @@ pred_func <- function(object, newdata) {
   predict(object, data = newdata)$predictions
 }
 
+create_formula <- function(target) as.formula(paste(paste0(target, " ~ "), paste(feature_names, collapse= "+")))
+
+
+split_data <- function(df, pct, target) {
+  require(rsample)
+  ds <- initial_split(df, prop = pct, strata = target)
+  return(list(trn = training(ds), tst = testing(ds)))
+}
+
+get_predictions <- function(obj, mod_name) {
+  mod <- obj[[mod_name]]
+  
+  trn_preds <- as_tibble(mod$predictions)
+  names(trn_preds)[names(trn_preds) == 1] <- paste0("pred_", obj$target)
+  names(trn_preds)[names(trn_preds) == 0] <- paste0("pred_no_", obj$target)
+  
+  tst_preds <- pred_func(mod, newdata = obj$df_test)
+  tst_preds <- as_tibble(tst_preds)
+  names(tst_preds)[names(tst_preds) == "V2"] <- paste0("pred_", obj$target)
+  names(tst_preds)[names(tst_preds) == "V1"] <- paste0("pred_no_", obj$target)
+  
+  return(list(trn_preds = trn_preds, tst_preds = tst_preds))
+}
+
+brier_score <- function(y_pred, y_true) sum((y_pred - y_true)^2)/length(y_pred)
+
+calc_metrics <- function(obj) {
+  require(MLmetrics)
+  
+  pred_target_name <- paste0("pred_", obj$target)
+  
+  trn_ypred <- obj$preds_trn[[pred_target_name]]
+  trn_ytrue <- obj$df_train[[obj$target]]
+  tst_ypred <- obj$preds_tst[[pred_target_name]]
+  tst_ytrue <- obj$df_test[[obj$target]]
+  
+  list(
+    brier_trn = brier_score(y_pred = trn_ypred, y_true = trn_ytrue),
+    logloss_trn = LogLoss(y_pred = trn_ypred, y_true = trn_ytrue),
+    
+    brier_tst = brier_score(y_pred = tst_ypred, y_true = tst_ytrue),
+    logloss_tst = LogLoss(y_pred = tst_ypred, y_true = tst_ytrue)
+  )
+}
+
+bind_preds <- function(obj) {
+  trn <- obj$df_train %>% 
+    mutate(data_split = "train") %>% 
+    bind_cols(obj$preds_trn)
+  
+  tst <- obj$df_test %>% 
+    mutate(data_split = "test") %>% 
+    bind_cols(obj$preds_tst)
+  
+  bind_rows(trn, tst)
+}
+
 # Read data ---------------------------------------------------------------
 
 #df_2model <- readr::read_rds(file.path(data_folder, "df_2model.rds"))
@@ -113,18 +170,11 @@ rm(df_block_2model)
 rm(df_rush_2model)
 
 
-create_formula <- function(target) as.formula(paste(paste0(target, " ~ "), paste(feature_names, collapse= "+")))
 
 model_list$block$formula <- create_formula(model_list$block$target)
 model_list$rush$formula <- create_formula(model_list$rush$target)
 
 
-
-split_data <- function(df, pct, target) {
-  require(rsample)
-  ds <- initial_split(df, prop = pct, strata = target)
-  return(list(trn = training(ds), tst = testing(ds)))
-}
 
 ds_block <- split_data(model_list$block$df_all, 0.75, model_list$block$target)
 model_list$block$df_train <- ds_block[["trn"]]
@@ -153,29 +203,6 @@ rm(ds_rush)
 
 model_list <- readr::read_rds("data/model_list.rds")
 
-obj <- model_list$block
-mod_name <- "rf0"
-
-
-
-
-
-get_predictions <- function(obj, mod_name) {
-  mod <- obj[[mod_name]]
-  
-  trn_preds <- as_tibble(mod$predictions)
-  names(trn_preds)[names(trn_preds) == 1] <- paste0("pred_", obj$target)
-  names(trn_preds)[names(trn_preds) == 0] <- paste0("pred_no_", obj$target)
-  
-  tst_preds <- pred_func(mod, newdata = obj$df_test)
-  tst_preds <- as_tibble(tst_preds)
-  names(tst_preds)[names(tst_preds) == "V2"] <- paste0("pred_", obj$target)
-  names(tst_preds)[names(tst_preds) == "V1"] <- paste0("pred_no_", obj$target)
-  
-  return(list(trn_preds = trn_preds, tst_preds = tst_preds))
-}
-
-
 block_preds <- get_predictions(model_list$block, mod_name = "rf0")
 rush_preds <- get_predictions(model_list$rush, mod_name = "rf0")
 
@@ -185,26 +212,7 @@ model_list$block$preds_tst <- block_preds$tst_preds
 model_list$rush$preds_trn <- rush_preds$trn_preds
 model_list$rush$preds_tst <- rush_preds$tst_preds
 
-brier_score <- function(y_pred, y_true) sum((y_pred - y_true)^2)/length(y_pred)
 
-calc_metrics <- function(obj) {
-  require(MLmetrics)
-  
-  pred_target_name <- paste0("pred_", obj$target)
-  
-  trn_ypred <- obj$preds_trn[[pred_target_name]]
-  trn_ytrue <- obj$df_train[[obj$target]]
-  tst_ypred <- obj$preds_tst[[pred_target_name]]
-  tst_ytrue <- obj$df_test[[obj$target]]
-  
-  list(
-    brier_trn = brier_score(y_pred = trn_ypred, y_true = trn_ytrue),
-    logloss_trn = LogLoss(y_pred = trn_ypred, y_true = trn_ytrue),
-    
-    brier_tst = brier_score(y_pred = tst_ypred, y_true = tst_ytrue),
-    logloss_tst = LogLoss(y_pred = tst_ypred, y_true = tst_ytrue)
-  )
-}
 
 model_list$block$metrics <- calc_metrics(model_list$block)
 model_list$rush$metrics <- calc_metrics(model_list$rush)
@@ -213,17 +221,7 @@ guess_brier <- 0.25
 
 # Model eval --------------------------------------------------------------
 
-bind_preds <- function(obj) {
-  trn <- obj$df_train %>% 
-    mutate(data_split = "train") %>% 
-    bind_cols(obj$preds_trn)
-  
-  tst <- obj$df_test %>% 
-    mutate(data_split = "test") %>% 
-    bind_cols(obj$preds_tst)
-  
-  bind_rows(trn, tst)
-}
+
 
 model_list$block$df_all <- bind_preds(model_list$block)
 model_list$rush$df_all <- bind_preds(model_list$rush)

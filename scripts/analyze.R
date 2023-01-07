@@ -16,10 +16,12 @@
 #measure of default prob in a situation and the players/team that increase/decrease chances due to skill/play/technique
 
 #IDEA****
-#frame by frame pressure allowed vs delivered probabilities for blockers and attached rushers
+#Model predicting probab change to get most important to win/recover
 
 #IDEA****
-#Model predicting probab change to get most important to win/recover
+#animate prob diff battles for example play
+
+
 
 # Libraries ---------------------------------------------------------------
 
@@ -69,14 +71,20 @@ calc_metric <- function(df, target) {
   names(df)[names(df) == target] <- "actual"
   names(df)[names(df) == paste0("pred_", target)] <- "prob"
   
-  df %>% 
+  temp_df <- df %>% 
     group_by(gameId, playId, nflId) %>% 
     summarise(
       prob = prob[frameId==min(frameId)],
       actual = unique(actual)
     ) %>% 
-    ungroup() %>% 
-    mutate(metric = actual - prob)
+    ungroup()
+  
+  if(target == "pressure_allowed") {
+    temp_df %>% mutate(metric = prob - actual)
+  } else {
+    temp_df %>% mutate(metric = actual - prob)
+  }
+    
 }
 
 metric_summary <- function(df, target) {
@@ -93,8 +101,32 @@ metric_summary <- function(df, target) {
     filter(snaps >= 100)
 }
 
+adj_metric_summary <- function(df, metric_col, id_col) {
+  temp_df <- pbp_edges %>% 
+    group_by(!!as.name(id_col)) %>% 
+    summarise(
+      snaps = n(),
+      total_metric = sum(!!as.name(metric_col)),
+      avg_metric = mean(!!as.name(metric_col))
+    ) %>% 
+    filter(snaps >= 100) %>% 
+    arrange(desc(avg_metric))
+  
+  players <- df_players
+  names(players)[names(players)=="nflId"] <- id_col
+  
+  temp_df <- temp_df %>% 
+    inner_join(players, by = id_col)
+  
+  names(temp_df)[names(temp_df) == id_col] <- "nflId"
+  
+  return(temp_df)
+}
 
 metric_table <- function(summary_metric, target) {
+  # block_name <- "PAUE"
+  # rush_name <- "PDOE"
+  
   temp_df <- summary_metric %>% 
     #head(10) %>% 
     mutate(
@@ -102,6 +134,7 @@ metric_table <- function(summary_metric, target) {
       total_metric = round(total_metric, 3)
     ) %>% 
     select(
+      nflId,
       Name = displayName,
       Position = officialPosition,
       Snaps = snaps,
@@ -109,16 +142,46 @@ metric_table <- function(summary_metric, target) {
       total_metric
     ) 
   
-  if(target == "pressure_allowed") {
-    names(temp_df)[names(temp_df) == "avg_metric"] <- "Average PAOE"
-    names(temp_df)[names(temp_df) == "total_metric"] <- "Total PAOE"
-  } else {
-    names(temp_df)[names(temp_df) == "avg_metric"] <- "Average PDOE"
-    names(temp_df)[names(temp_df) == "total_metric"] <- "Total PDOE"
-  }
+  # if(target == "pressure_allowed") {
+  #   names(temp_df)[names(temp_df) == "avg_metric"] <- paste("Average", block_name)
+  #   names(temp_df)[names(temp_df) == "total_metric"] <- paste("Total", block_name)
+  # } else {
+  #   names(temp_df)[names(temp_df) == "avg_metric"] <- paste("Average", rush_name)
+  #   names(temp_df)[names(temp_df) == "total_metric"] <- paste("Total", rush_name)
+  # }
   
   return(temp_df)
 }
+
+prep_for_probplot <- function(df) {
+  df %>% 
+    filter(gameId == ex_gameId & playId == ex_playId) %>% 
+    inner_join(select(df_players, nflId, displayName), by = "nflId") %>% 
+    mutate(nflId = as.character(nflId)) 
+}
+
+
+create_prob_plot <- function(df, target_pred) {
+  
+  df <- prep_for_probplot(df)
+  #legend_name <- if(target_pred == "pred_pressure_allowed") "Blocker" else "Rusher"
+  
+  ggplot(df, aes(x = frames_from_start, y = !!as.name(target_pred), group = displayName, color = displayName)) +
+    geom_line() +
+    geom_point(pch=19, size=3) +
+    #scale_color_manual(legend_name, values = c("black", "orange", "blue")) +
+    scale_y_continuous("Pressure Probability", labels = scales::percent) +
+    scale_x_continuous("Time(s)", 
+                       breaks = seq(0, max(df$frames_from_start), 5),
+                       labels = ~.x/10) +
+    ggtitle("Frame-by-Frame Pressure Probability") +
+    theme_minimal() +
+    theme(
+      panel.grid.minor.x = element_blank(),
+      panel.grid.minor.y = element_blank()
+    )
+}
+
 
 # Read data ---------------------------------------------------------------
 
@@ -179,8 +242,11 @@ df_pff_pocket <- df_pff %>%
 #   distinct() %>% 
 #   as.list()
 
+ex_gameId <- 2021093000
+ex_playId <- 3206
+
 #play chosen from Hendrickson's highlights
-df_for_plot <- prep_example_for_plot(df_results, 2021093000, 3206) %>% 
+df_for_plot <- prep_example_for_plot(df_results, ex_gameId, ex_playId) %>% 
   mutate(size_of_point = ifelse(team == "football", 1, 10)) %>% 
   mutate(prob = ifelse(!is.na(pred_pressure_allowed), pred_pressure_allowed, pred_pressure_delivered)) %>% 
   mutate(side_of_ball = ifelse(team == possessionTeam | team == "football", "off", "def"))
@@ -190,27 +256,37 @@ pause_frame <- rush_results %>%
   filter(dist_to_qb == min(dist_to_qb)) %>% 
   pull(frameId)
 
-#running this will make plot 1 frame where max probability was
-df_for_plot %>%
-  group_by(gameId, playId, frameId) %>%
-  mutate(max_prob = max(pred_pressure_delivered, na.rm = TRUE)) %>%
-  ungroup() %>%
-  filter(max_prob == max(max_prob,na.rm=TRUE)) %>% 
-  create_pocket_plot()
-
-create_pocket_plot(filter(df_for_plot, frameId == pause_frame))
+# #running this will make plot 1 frame where max probability was
+# df_for_plot %>%
+#   group_by(gameId, playId, frameId) %>%
+#   mutate(max_prob = max(pred_pressure_delivered, na.rm = TRUE)) %>%
+#   ungroup() %>%
+#   filter(max_prob == max(max_prob,na.rm=TRUE)) %>% 
+#   create_pocket_plot()
+# 
+# create_pocket_plot(filter(df_for_plot, frameId == pause_frame))
 
 
 full_play_plot <- create_pocket_plot(df_for_plot)
 
-animate(
-  full_play_plot + transition_time(frameId),
-  nframes = max(df_for_plot$frameId),
-  renderer = magick_renderer(),
-  width = 720,
-  height = 440,
-  res = 150
-)
+# animate(
+#   full_play_plot + transition_time(frameId),
+#   nframes = max(df_for_plot$frameId),
+#   renderer = magick_renderer(),
+#   width = 720,
+#   height = 440,
+#   res = 150
+# )
+
+
+
+
+
+block_prob_plot <- create_prob_plot(block_results, "pred_pressure_allowed")
+rush_prob_plot <- create_prob_plot(rush_results, "pred_pressure_delivered")
+
+block_prob_plot + transition_reveal(frameId)
+rush_prob_plot + transition_reveal(frameId)
 
 # Calculate pressure allowed/delivered over expected and aggregate --------
 
@@ -222,31 +298,76 @@ rush_metric_table <- metric_table(rush_metric, "pressure_delivered")
 
 
 block_metric_table %>%
+  select(-nflId) %>% 
+  rename(`Average PAUE` = avg_metric, `Total PAUE` = total_metric) %>% 
   kbl(caption = "Min 100 snaps") %>%
   kable_paper("hover", full_width = FALSE)
 
 rush_metric_table %>%
+  rename(`Average PDOE` = avg_metric, `Total PDOE` = total_metric) %>% 
   kbl(caption = "Min 100 snaps") %>%
   kable_paper("hover", full_width = FALSE)
 
 
-
 # Compare blockers and blocked players ------------------------------------
 
-rush2join <- rush_results %>% 
+fbf_rush2join <- rush_results %>% 
   select(ends_with("Id"), jerseyNumber, team, x, y, s, a, dis, o, dir,
-         side_of_ball, contains("delivered"), , pff_positionLinedUp, pff_role, contains("near_oppo"),
+         side_of_ball, contains("delivered"), pff_positionLinedUp, pff_role, contains("near_oppo"),
          dist_to_qb, data_split)
 
-results_joined <- block_results %>% 
+fbf_results_joined <- block_results %>% 
   inner_join(
-    rush2join, 
+    fbf_rush2join, 
     by = c("gameId", "playId", "frameId", "pff_nflIdBlockedPlayer" = "nflId"),
     suffix = c(".block", ".rush")
   )
 
-results_joined %>% 
-  select(ends_with("Id"), pff_nflIdBlockedPlayer, contains("pressure"))
+pbp_results_joined <- block_results %>% 
+  calc_metric(target = "pressure_allowed") %>% 
+  inner_join(select(df_pff, contains("Id")), by = c("gameId", "playId", "nflId")) %>% 
+  inner_join(calc_metric(rush_results, target = "pressure_delivered"), 
+             by = c("gameId", "playId", "pff_nflIdBlockedPlayer" = "nflId"),
+             suffix = c(".block", ".rush"))
 
-ggplot(results_joined, aes(x=pred_pressure_allowed, y=pred_pressure_delivered)) + 
-  geom_point()
+#TODO - needs attention
+pbp_edges <- pbp_results_joined %>% 
+  filter(actual.block == actual.rush) %>% 
+  mutate(
+    #if prob of allowing pressure > 50%, rusher is favored
+    favorite.block = ifelse(prob.block > 0.5, "rusher", "blocker"),
+    #if prob of delivering pressure > 50%, rusher is favored
+    favorite.rush = ifelse(prob.rush > 0.5, "rusher", "blocker"),
+    favorite_conflicts = favorite.block != favorite.rush,
+    favorite_edge = abs(prob.block - prob.rush),
+    metric_adj.block = ifelse(actual.block == 1, metric.block - favorite_edge, metric.block + favorite_edge),
+    metric_adj.rush = ifelse(actual.rush == 1, metric.rush + favorite_edge, metric.rush - favorite_edge),
+    actual_conflicts = actual.block != actual.rush
+  )
+
+pbp_edges %>% count(favorite.block, favorite.rush, favorite_conflicts, sort = TRUE)
+pbp_edges %>% group_by(pressure_recorded = actual.block) %>% summarise(avg_edge = mean(favorite_edge))
+
+
+block_adj_metrics <- adj_metric_summary(pdp_edges, "metric_adj.block", "nflId")
+rush_adj_metrics <- adj_metric_summary(pdp_edges, "metric_adj.rush", "pff_nflIdBlockedPlayer")
+
+block_adj_metric_table <- metric_table(block_adj_metrics, "pressure_allowed")
+rush_adj_metric_table <-metric_table(rush_adj_metrics, "pressure_delivered")
+
+
+# Join base metric with adj metric ----------------------------------------
+
+block_both_mets <- block_metric_table %>% 
+  inner_join(select(block_adj_metric_table, -Name, -Position), by = "nflId", suffix = c("", "_adj"))
+
+rush_both_mets <- rush_metric_table %>% 
+  inner_join(select(rush_adj_metric_table, -Name, -Position), by = "nflId", suffix = c("", "_adj"))
+
+#compare rankings between metrics
+block_both_mets %>% 
+  mutate(
+    metric_rank = dplyr::min_rank(avg_metric),
+    adj_metric_rank = dplyr::min_rank(avg_metric_adj),
+    rank_diff = adj_metric_rank - metric_rank
+  )
