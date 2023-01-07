@@ -182,6 +182,16 @@ create_prob_plot <- function(df, target_pred) {
     )
 }
 
+combined_metrics <- function(metric_table, adj_metric_table) {
+  metric_table %>% 
+    inner_join(select(adj_metric_table, -Name, -Position), by = "nflId", suffix = c("", "_adj")) %>% 
+    mutate(
+      metric_rank = dplyr::min_rank(avg_metric),
+      adj_metric_rank = dplyr::min_rank(avg_metric_adj),
+      rank_diff = adj_metric_rank - metric_rank
+    )
+}
+
 
 # Read data ---------------------------------------------------------------
 
@@ -358,16 +368,48 @@ rush_adj_metric_table <-metric_table(rush_adj_metrics, "pressure_delivered")
 
 # Join base metric with adj metric ----------------------------------------
 
-block_both_mets <- block_metric_table %>% 
-  inner_join(select(block_adj_metric_table, -Name, -Position), by = "nflId", suffix = c("", "_adj"))
+block_both_mets <- combined_metrics(block_metric_table, block_adj_metric_table)
+rush_both_mets <- combined_metrics(rush_metric_table, rush_adj_metric_table)
 
-rush_both_mets <- rush_metric_table %>% 
-  inner_join(select(rush_adj_metric_table, -Name, -Position), by = "nflId", suffix = c("", "_adj"))
 
-#compare rankings between metrics
-block_both_mets %>% 
-  mutate(
-    metric_rank = dplyr::min_rank(avg_metric),
-    adj_metric_rank = dplyr::min_rank(avg_metric_adj),
-    rank_diff = adj_metric_rank - metric_rank
-  )
+pff_folder <- file.path(data_folder, "pff")
+
+block_pffmets <- read_csv(file.path(pff_folder, "pass_blocking_efficiency.csv")) %>% select(player_id, player, pbe, grade = grades_pass_block)
+rush_pffmets <- read_csv(file.path(pff_folder, "pass_rush_grades.csv")) %>% select(player_id, player, prp, grade = grades_pass_rush_defense)
+
+block_compare_metrics <- block_both_mets %>% 
+  inner_join(block_pffmets, by = c("Name" = "player"))
+
+rush_compare_metrics <- rush_both_mets %>% 
+  inner_join(rush_pffmets, by = c("Name" = "player"))
+
+
+compare_metrics <- function(df, xmet, ymet, lab_x, lab_y) {
+  compare_cor <- cor(df[[xmet]], df[[ymet]])
+  compare_cor <- paste("R2:", round(compare_cor,2))
+  
+
+  ggplot(df, aes(x = !!as.name(xmet), y = !!as.name(ymet))) + 
+    geom_point(alpha = 0.6) +
+    geom_smooth(method = "lm", se = FALSE) + 
+    geom_text(x = min(df[[xmet]]), y = max(df[[ymet]]), label = compare_cor) +
+    ggtitle("Metric Comparison") +
+    ylab(lab_y) +
+    xlab(lab_x) +
+    theme_minimal()
+}
+
+compare_metrics(block_compare_metrics, "grade", "avg_metric", "PFF Grade", "PAUE")
+compare_metrics(block_compare_metrics, "grade", "avg_metric_adj", "PFF Grade", "Adj PAUE")
+
+compare_metrics(block_compare_metrics, "pbe", "avg_metric", "PFF Pass Block Efficiency", "PAUE")
+compare_metrics(block_compare_metrics, "pbe", "avg_metric_adj", "PFF Pass Block Efficiency", "Adj PAUE")
+
+
+
+compare_metrics(rush_compare_metrics, "grade", "avg_metric", "PFF Grade", "PDOE")
+compare_metrics(rush_compare_metrics, "grade", "avg_metric_adj", "PFF Grade", "Adj PDOE")
+
+compare_metrics(rush_compare_metrics, "prp", "avg_metric", "PFF Pass Rush Productvity", "PDOE")
+compare_metrics(rush_compare_metrics, "prp", "avg_metric_adj", "PFF Pass Rush Productvity", "Adj PDOE")
+
