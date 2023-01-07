@@ -5,17 +5,6 @@ library(gganimate)
 
 hex_points <- c("QB", "LT", "LG", "C", "RG", "RT")
 
-df_pff_pocket <- readr::read_rds("data/df_pff_pocket.rds")
-
-filter_to_pocket <- function(tracking_df, pff_pocket_df) {
-  #filter to blocking OL and passing QB
-  tracking_df %>% 
-    inner_join(
-      select(pff_pocket_df, gameId, playId, nflId, pff_positionLinedUp), 
-      by = c("gameId", "playId", "nflId")
-    )
-}
-
 calc_dist <- function(x1, x2, y1, y2) sqrt( (x2 - x1)^2 + (y2 - y1)^2 )
 
 keep_cats <- function(df, cat, pct) {
@@ -27,18 +16,6 @@ keep_cats <- function(df, cat, pct) {
     filter(npct_cumsum <= pct) %>% 
     pull(!!as.name(cat))
 }
-
-# frame_coords <- function(df, x_or_y) {
-#   df_temp <- df %>%
-#     select(playerId, !!as.name(x_or_y)) %>%
-#     mutate(playerId = paste0(x_or_y, as.character(playerId))) %>%
-#     t() %>%
-#     as.data.frame()
-# 
-#   names(df_temp) <- df_temp[1,]
-#   df_temp[2,]
-# }
-
 
 get_player_coords_1 <- function(df) {
   #elapsed 46.95
@@ -155,6 +132,7 @@ get_dist <- function(frame_dists, pid1, pid2) as.numeric(distances::distance_col
 
 
 
+
 # foundation of tracking animations ---------------------------------------
 
 base_field_plot <- function(yard_start=0, yard_end=122) {
@@ -193,135 +171,41 @@ std_coords <- function(tracking_df) {
 }
 
 
-# base play animation function --------------------------------------------
-
-animate_play <- function(tracking_df, plays_df, ex_gameId, ex_playId) {
-  
-  #print(head(tracking_df))
-  
-  print('filtering to play')
-  
-  df_examplePlay <- plays_df %>%
-    filter(gameId == ex_gameId & playId == ex_playId) %>% 
-    select(gameId, playId, playDescription)
-
-  stopifnot(nrow(df_examplePlay) == 1)
-  
-  #print(head(df_examplePlay))
-  
-  print('joining data')
-  
-  #merging tracking data to play
-  df_examplePlayTracking <- inner_join(
-    df_examplePlay, 
-    tracking_df, 
-    by = c("gameId", "playId")
-  ) %>% std_coords()
-  
-  print('setting plotting vars')
-  
-  plot_title <- df_examplePlay$playDescription
-  num_frames <- max(df_examplePlayTracking$frameId)
-  
-  #print(head(df_examplePlayTracking))
-  #print("num_frames: ")
-  #print(num_frames)
-  
-  print('creating plot')
-  
-  bfp <- base_field_plot()
-  
-  #plotting
-  anim <- bfp +
-    
-    
-    #adding players
-    geom_point(data = df_examplePlayTracking, aes(x = x,
-                                                  y = y, 
-                                                  shape = team,
-                                                  fill = team,
-                                                  group = nflId,
-                                                  size = team,
-                                                  colour = team), 
-               alpha = 0.7) +  
-    
-    #adding jersey numbers
-    geom_text(data = df_examplePlayTracking,
-              aes(x = x, y = y, label = jerseyNumber),
-              colour = "white", 
-              vjust = 0.36, size = 3.5) + 
-    
-    
-    #titling plot with play description
-    labs(title = plot_title) +
-    
-    #setting animation parameters
-    transition_time(frameId)  +
-    ease_aes("linear") + 
-    NULL
-  
-  print('play animation')
-  
-  #saving animation to display in markdown cell below:
-  animate(anim, width = 720, height = 440,
-          fps = 10, nframes = num_frames,
-          renderer = gifski_renderer())
-  
-  #anim_save("output.gif")
-  
-}
-
-
-
-# pocket size plot and animation ------------------------------------------
-
 prep_example_for_plot <- function(tracking_df, game_id, play_id) {
   tracking_df %>% 
     filter(gameId == game_id & playId == play_id) %>%
-    inner_join(select(df_plays, gameId, playId, playDescription)) %>% 
+    inner_join(select(df_plays, gameId, playId, playDescription, possessionTeam)) %>% 
     std_coords()
 }
 
-create_pocket_plot <- function(df4plot) {
-  #df4plot must be 1 play of tracking data ran through prep_example_for_plot
-  df4plot_pocket <- filter_to_pocket(df4plot, df_pff_pocket) %>% 
+create_pocket_plot <- function(df_for_plot) {
+  df_for_plot_pocket <- df_for_plot %>% 
+    inner_join(
+      select(df_pff_pocket, gameId, playId, nflId, pff_positionLinedUp), 
+      by = c("gameId", "playId", "nflId")
+    ) %>% 
     arrange(factor(pff_positionLinedUp, levels = hex_points))
   
-  #create base field plot
-  bfp <- base_field_plot(min(df4plot$x)-10, max(df4plot$x)+10)
-  
-  #add OL/QB tracking data and pocket size to plot for the whole play
-  bfp +
-    geom_polygon(data = df4plot_pocket, aes(x = x, y = y)) +
-    geom_text(data = df4plot, aes(x = mean(x), y = max(y)+ 3, label = paste("Pocket Size", round(pocket_size,2), sep = ": "))) +
-    #adding players
-    geom_point(
-      data = df4plot, 
-      aes(x=x, y=y, shape=team, fill=team, group=nflId, size=team, colour=team), 
-      alpha = 0.7
-    ) +  
-    #adding jersey numbers
-    geom_text(
-      data = df4plot,
-      aes(x = x, y = y, label = jerseyNumber),
-      colour = "white", vjust = 0.36, size = 3.5
-    ) +
-    ggtitle(df4plot$playDescription)
-}
-
-
-create_pocket_animation <- function(pocket_plot, num_frames) {
-  #pocket_plot created by create_pocket_plot
-  #num frames should be max frameId of given play
-  
-  #add animation attributes to view frame by frame
-  pocket_anim <- pocket_plot +
-    transition_time(frameId)  +
-    ease_aes("linear") + 
-    NULL
-  
-  #create animation to view pocket size frame by frame
-  animate(pocket_anim, width = 720, height = 440,
-          fps = 10, nframes = num_frames,
-          renderer = gifski_renderer())
+  ggplot(data = filter(df_for_plot, side_of_ball == "off"), aes(x = x, y = y)) + 
+    geom_polygon(data = df_for_plot_pocket, aes(x = x, y = y), fill = "blue", alpha = 0.1) +
+    geom_point(aes(fill = pred_pressure_allowed, size = size_of_point), shape = 21) +
+    scale_fill_gradient("off", low = "white", high = "blue") +
+    new_scale("fill") +
+    geom_point(data = filter(df_for_plot, side_of_ball == "def"), aes(fill = pred_pressure_delivered, size = size_of_point), shape = 21) +
+    scale_fill_gradient("def", low = "white", high = "orange") +
+    geom_text(data = df_for_plot, aes(x = x, y = y, label = jerseyNumber, size = size_of_point*0.5), color = "black", vjust = 0.35) +
+    scale_radius() +
+    ggtitle(df_for_plot$playDescription) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      axis.text.y = element_blank(),
+      panel.grid.major.x = element_line(size = 1),
+      panel.grid.minor.x = element_line(size = 1),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor.y = element_blank()#,
+      #plot.title = element_text(size = 6)
+    )
 }

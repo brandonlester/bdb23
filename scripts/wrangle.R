@@ -108,6 +108,7 @@ df_tracking <- df_tracking %>%
   filter(frameId >= start_frame & frameId <= end_frame) %>%
   ungroup()
 
+readr::write_rds(df_tracking, "data/df_tracking_foi.rds")
 #skim_tracking <- skimr::skim(df_tracking)
 
 
@@ -133,8 +134,11 @@ df_pff_pocket <- df_pff %>%
 #     by = c("gameId", "playId", "nflId")
 #   )
 
-df_pocket <- filter_to_pocket(df_tracking, df_pff_pocket)
-
+df_pff_pocket <- df_pff %>% 
+  filter(
+    (pff_positionLinedUp %in% ol_positions & pff_role == "Pass Block") |
+      pff_positionLinedUp == "QB" & pff_role == "Pass"
+  )
 
 #filter to only plays with 5 blocking OL and 1 passing QB
 df_pocket <- df_pocket %>% 

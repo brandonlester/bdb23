@@ -18,44 +18,34 @@
 #IDEA****
 #frame by frame pressure allowed vs delivered probabilities for blockers and attached rushers
 
-
+#IDEA****
+#Model predicting probab change to get most important to win/recover
 
 # Libraries ---------------------------------------------------------------
 
 library(tidyverse)
-library(skimr)
-source("scripts/dots.R")
 library(kableExtra)
+library(gganimate)
+library(ggnewscale)
+library(magick)
+
+source("scripts/dots.R")
+
 
 
 # Constants ---------------------------------------------------------------
 
+#folders
 data_folder <- "data"
 output_folder <- "output"
+nb_folder <- "notebook"
+
+
+
+hex_points <- c("QB", "LT", "LG", "C", "RG", "RT")
 ol_positions <- hex_points[-1]
 
 # Functions ---------------------------------------------------------------
-
-
-# Read data ---------------------------------------------------------------
-
-model_results <- readr::read_rds("data/model_results.rds")
-block_results <- model_results$block$df_all
-rush_results <- model_results$rush$df_all
-rm(model_results)
-gc()
-
-df_plays <- readr::read_csv(file.path(data_folder, "plays.csv"))
-df_players <- read_csv(file.path(data_folder, "players.csv"))
-
-list_tracking <- readr::read_rds(file.path(data_folder, "list_tracking.rds"))
-df_tracking  <- bind_rows(list_tracking)
-rm(list_tracking)
-gc()
-
-# Analyze model results ---------------------------------------------------
-
-#skimr::skim(df_results)
 
 summarise_results <- function(df, target) {
   names(df)[names(df) == target] <- "actual"
@@ -71,97 +61,11 @@ summarise_results <- function(df, target) {
     ungroup() %>% 
     mutate(
       start_probchange = prob - start_prob,
-      frame_probchange = prob - prev_prob,
-      ppoe = actual - prob
+      frame_probchange = prob - prev_prob
     )
 }
 
-block_results_summary <- summarise_results(block_results, "pressure_allowed")
-rush_results_summary <- summarise_results(rush_results, "pressure_delivered")
-
-df_tracking %>% 
-  inner_join(select(block_results, gameId, playId, nflId, frameId), by = c("gameId", "playId", "frameId", "nflId")) %>% count(gameId, playId, frameId)
-
-
-df_results <- df_tracking %>% 
-  left_join(select(block_results, gameId, playId, frameId, nflId, pred_pressure_allowed), by = c("gameId", "playId", "frameId", "nflId")) %>%
-  left_join(select(rush_results, gameId, playId, frameId, nflId, pred_pressure_delivered), by = c("gameId", "playId", "frameId", "nflId")) %>% 
-  group_by(gameId, playId, frameId) %>% 
-  filter(any(!is.na(pred_pressure_allowed))) %>% 
-  filter(any(!is.na(pred_pressure_delivered))) %>% 
-  ungroup()
-
-# Visualize probability predictions ---------------------------------------
-
-
-#df_for_plot <- prep_example_for_plot(df_trackwpreds, 2021090900, 97) 
-df_for_plot <- prep_example_for_plot(df_results, 2021091201, 63) %>% 
-  mutate(not_ball = team!="football") %>% 
-  mutate(prob = ifelse(!is.na(pred_pressure_allowed), pred_pressure_allowed, pred_pressure_delivered))
-
-#TODO add pocket size polygon
-pocket_plot <- ggplot(df_for_plot, aes(x = x, y = y)) + 
-  geom_point(aes(fill = prob, size = not_ball, color = team), pch = 21) +
-  scale_fill_gradient(low = "white", high = "red") +
-  scale_color_manual(values = c("white", "grey", "black")) +
-  geom_text(aes(x = x, y = y, label = jerseyNumber), color = "black", size = 3.5, vjust = 0.35) +
-  ggtitle(df_for_plot$playDescription) +
-  theme_minimal() +
-  theme(
-    legend.position = "none",
-    axis.title.x = element_blank(),
-    axis.title.y = element_blank(),
-    axis.text.y = element_blank(),
-    panel.grid.major.x = element_line(size = 1),
-    panel.grid.minor.x = element_line(size = 1),
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor.y = element_blank()
-  )
-
-pocket_anim <- create_pocket_animation(pocket_plot, max(df_for_plot$frameId))
-
-ggsave(
-  path = paste0(output_folder,"/"),
-  filename = "draft_dots_plot.jpeg",
-  plot = pocket_plot,
-  device = jpeg,
-  units = "in",
-  width = 10,
-  height = 6,
-  dpi = 300
-)
-
-anim_save(animation = pocket_anim, filename = file.path(output_folder, "draft_dots_anim.gif"))
-
-# pocket_plot <- create_pocket_plot(df_for_plot) +
-#   geom_text(data = df_for_plot, aes(x = mean(x), y = max(y)+ 5, label = paste("Sack Probability", scales::percent(pred_sack.play, accuracy = 0.01), sep = ": ")))
-
-# df4plot %>% 
-#   filter(pred_sack == max(pred_sack)) %>% 
-#   create_pocket_plot() + 
-#     geom_text(data = df4plot, aes(x = mean(x), y = max(y)+ 5, label = paste("Sack Probability", scales::percent(pred_sack, accuracy = 0.01), sep = ": ")))
-
-# # TODO - why is above showing multiple sack probabilities on the plot?
-# max_prob <- max(df4plot$pred_sack)
-# 
-# example_frame_plot <- df4plot %>% 
-#   filter(pred_sack == max(pred_sack)) %>% 
-#   create_pocket_plot() + 
-#   geom_text(data = df4plot, aes(x = mean(x), y = max(y)+ 5, label = paste("Sack Probability", scales::percent(max_prob, accuracy = 0.01), sep = ": ")))
-
-# ggsave(
-#   path = "output/",
-#   filename = "prob_and_pocket_plot.png", 
-#   plot = example_frame_plot,
-#   device = png
-# )
-# 
-# pocket_anim <- create_pocket_animation(pocket_plot, max(df_for_plot$frameId))
-
-
-# Final metrics -----------------------------------------------------------
-
-ppoe_summary <- function(df, target) {
+calc_metric <- function(df, target) {
   names(df)[names(df) == target] <- "actual"
   names(df)[names(df) == paste0("pred_", target)] <- "prob"
   
@@ -172,43 +76,177 @@ ppoe_summary <- function(df, target) {
       actual = unique(actual)
     ) %>% 
     ungroup() %>% 
-    mutate(ppoe = actual - prob) %>% 
+    mutate(metric = actual - prob)
+}
+
+metric_summary <- function(df, target) {
+  df %>% 
+    calc_metric(target = target) %>% 
     group_by(nflId) %>% 
     summarise(
       snaps = n(),
-      total_ppoe = sum(ppoe),
-      avg_ppoe = mean(ppoe)
+      total_metric = sum(metric),
+      avg_metric = mean(metric)
     ) %>% 
-    arrange(desc(avg_ppoe)) %>% 
+    arrange(desc(avg_metric)) %>% 
     inner_join(df_players, by = "nflId") %>% 
     filter(snaps >= 100)
 }
 
-block_ppoe <- ppoe_summary(block_results, "pressure_allowed")
-rush_ppoe <- ppoe_summary(rush_results, "pressure_delivered")
 
-ppoe_table <- function(summary_ppoe) {
-  summary_ppoe %>% 
-    head(10) %>% 
+metric_table <- function(summary_metric, target) {
+  temp_df <- summary_metric %>% 
+    #head(10) %>% 
     mutate(
-      avg_ppoe = round(avg_ppoe, 3),
-      total_ppoe = round(total_ppoe, 3)
+      avg_metric = round(avg_metric, 3),
+      total_metric = round(total_metric, 3)
     ) %>% 
     select(
       Name = displayName,
       Position = officialPosition,
       Snaps = snaps,
-      `Average PPOE` = avg_ppoe,
-      `Total PPOE` = total_ppoe
-    ) %>% 
-    kbl(caption = "Min 100 snaps") %>%
-    kable_paper("hover", full_width = FALSE)
+      avg_metric,
+      total_metric
+    ) 
+  
+  if(target == "pressure_allowed") {
+    names(temp_df)[names(temp_df) == "avg_metric"] <- "Average PAOE"
+    names(temp_df)[names(temp_df) == "total_metric"] <- "Total PAOE"
+  } else {
+    names(temp_df)[names(temp_df) == "avg_metric"] <- "Average PDOE"
+    names(temp_df)[names(temp_df) == "total_metric"] <- "Total PDOE"
+  }
+  
+  return(temp_df)
 }
 
-block_ppoe_table <- ppoe_table(block_ppoe)
-rush_ppoe_table <- ppoe_table(rush_ppoe)
+# Read data ---------------------------------------------------------------
 
-#TODO - may not need to save to files, just display properly in kaggle notebook
-#save_kable(block_ppoe, "block_ppoe.jpeg")
-#webshot::install_phantomjs() #this got it to run
-#install.packages("magick") #suggest this but still html in jpeg as output
+#source data
+df_pff <- read_csv(file.path(data_folder, "pffScoutingData.csv"))
+df_plays <- read_csv(file.path(data_folder, "plays.csv"))
+df_players <- read_csv(file.path(data_folder, "players.csv"))
+
+model_results <- readr::read_rds("data/model_results.rds")
+block_results <- model_results$block$df_all
+rush_results <- model_results$rush$df_all
+rm(model_results)
+gc()
+
+
+df_tracking_foi  <- read_rds(file.path(data_folder, "df_tracking_foi.rds"))
+
+
+# Analyze model results ---------------------------------------------------
+
+#skimr::skim(df_results)
+
+
+block_results_summary <- summarise_results(block_results, "pressure_allowed")
+rush_results_summary <- summarise_results(rush_results, "pressure_delivered")
+
+
+df_results <- df_tracking_foi %>% 
+  left_join(select(block_results, gameId, playId, frameId, nflId, pred_pressure_allowed), by = c("gameId", "playId", "frameId", "nflId")) %>%
+  left_join(select(rush_results, gameId, playId, frameId, nflId, pred_pressure_delivered), by = c("gameId", "playId", "frameId", "nflId")) %>% 
+  group_by(gameId, playId, frameId) %>% 
+  filter(any(!is.na(pred_pressure_allowed))) %>% 
+  filter(any(!is.na(pred_pressure_delivered))) %>% 
+  ungroup()
+
+
+# Visualize pressure allowed/delivered probabilities ----------------------
+
+df_pff_pocket <- df_pff %>% 
+  filter(
+    (pff_positionLinedUp %in% ol_positions & pff_role == "Pass Block") |
+      pff_positionLinedUp == "QB" & pff_role == "Pass"
+  )
+
+# #find best over expected play from Bengals DE's
+# rush_mets <- calc_metric(rush_results, target = "pressure_delivered")
+# 
+# bengals_example <- df_pff %>% 
+#   inner_join(df_players, by = "nflId") %>% 
+#   filter(pff_sack==1) %>% 
+#   filter(displayName == "Trey Hendrickson" | displayName == "Sam Hubbard") %>% 
+#   select(contains("Id"), displayName) %>% 
+#   select(-pff_nflIdBlockedPlayer) %>% 
+#   inner_join(df_results, by = c("gameId", "playId", "nflId")) %>% 
+#   inner_join(rush_mets, by = c("gameId", "playId", "nflId")) %>% 
+#   filter(metric == max(metric)) %>% 
+#   select(gameId, playId) %>% 
+#   distinct() %>% 
+#   as.list()
+
+#play chosen from Hendrickson's highlights
+df_for_plot <- prep_example_for_plot(df_results, 2021093000, 3206) %>% 
+  mutate(size_of_point = ifelse(team == "football", 1, 10)) %>% 
+  mutate(prob = ifelse(!is.na(pred_pressure_allowed), pred_pressure_allowed, pred_pressure_delivered)) %>% 
+  mutate(side_of_ball = ifelse(team == possessionTeam | team == "football", "off", "def"))
+
+pause_frame <- rush_results %>% 
+  inner_join(select(df_for_plot, ends_with("Id")), by = c("gameId", "playId", "nflId", "frameId")) %>% 
+  filter(dist_to_qb == min(dist_to_qb)) %>% 
+  pull(frameId)
+
+#running this will make plot 1 frame where max probability was
+df_for_plot %>%
+  group_by(gameId, playId, frameId) %>%
+  mutate(max_prob = max(pred_pressure_delivered, na.rm = TRUE)) %>%
+  ungroup() %>%
+  filter(max_prob == max(max_prob,na.rm=TRUE)) %>% 
+  create_pocket_plot()
+
+create_pocket_plot(filter(df_for_plot, frameId == pause_frame))
+
+
+full_play_plot <- create_pocket_plot(df_for_plot)
+
+animate(
+  full_play_plot + transition_time(frameId),
+  nframes = max(df_for_plot$frameId),
+  renderer = magick_renderer(),
+  width = 720,
+  height = 440,
+  res = 150
+)
+
+# Calculate pressure allowed/delivered over expected and aggregate --------
+
+block_metric <- metric_summary(block_results, "pressure_allowed")
+rush_metric <- metric_summary(rush_results, "pressure_delivered")
+
+block_metric_table <- metric_table(block_metric, "pressure_allowed")
+rush_metric_table <- metric_table(rush_metric, "pressure_delivered")
+
+
+block_metric_table %>%
+  kbl(caption = "Min 100 snaps") %>%
+  kable_paper("hover", full_width = FALSE)
+
+rush_metric_table %>%
+  kbl(caption = "Min 100 snaps") %>%
+  kable_paper("hover", full_width = FALSE)
+
+
+
+# Compare blockers and blocked players ------------------------------------
+
+rush2join <- rush_results %>% 
+  select(ends_with("Id"), jerseyNumber, team, x, y, s, a, dis, o, dir,
+         side_of_ball, contains("delivered"), , pff_positionLinedUp, pff_role, contains("near_oppo"),
+         dist_to_qb, data_split)
+
+results_joined <- block_results %>% 
+  inner_join(
+    rush2join, 
+    by = c("gameId", "playId", "frameId", "pff_nflIdBlockedPlayer" = "nflId"),
+    suffix = c(".block", ".rush")
+  )
+
+results_joined %>% 
+  select(ends_with("Id"), pff_nflIdBlockedPlayer, contains("pressure"))
+
+ggplot(results_joined, aes(x=pred_pressure_allowed, y=pred_pressure_delivered)) + 
+  geom_point()
