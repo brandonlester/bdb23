@@ -42,7 +42,7 @@ fp_tracking <- paste0(data_folder, "/",data_fp[str_detect(data_fp, "week")])
 # readr::write_rds(list_tracking, file.path(data_folder, "list_tracking.rds"))
 
 list_tracking <- readr::read_rds(file.path(data_folder, "list_tracking.rds"))
-df_tracking  <- bind_rows(list_tracking)
+df_tracking_import  <- bind_rows(list_tracking)
 rm(list_tracking)
 
 # Prep plays data ---------------------------------------------------------
@@ -58,10 +58,20 @@ df_plays_wrangled <- df_plays %>%
   #filter(quarter <= xxx) %>% 
   filter(down != 0) %>% 
   #filter(yardsToGo <= xxx) %>% 
+  # mutate(
+  #   off_personnel = ifelse(personnelO %in% off_personnels, personnelO, "Other"),
+  #   def_personnel = ifelse(personnelD %in% def_personnels, personnelD, "Other")
+  # ) %>% 
   mutate(
-    off_personnel = ifelse(personnelO %in% off_personnels, personnelO, "Other"),
-    def_personnel = ifelse(personnelD %in% def_personnels, personnelD, "Other")
+    num_rb = str_remove(str_extract(personnelO, "[0-9] RB"), " RB"),
+    num_te = str_remove(str_extract(personnelO, "[0-9] TE"), " TE"),
+    num_wr = str_remove(str_extract(personnelO, "[0-9] WR"), " WR"),
   ) %>% 
+  mutate(
+    num_dl = str_remove(str_extract(personnelD, "[0-9] DL"), " DL"),
+    num_lb = str_remove(str_extract(personnelD, "[0-9] LB"), " LB"),
+    num_db = str_remove(str_extract(personnelD, "[0-9] DB"), " DB"),
+  )
   mutate(
     dropBackCategory = case_when(
       str_detect(dropBackType, "DESIGNED_ROLLOUT") ~ "rollout",
@@ -73,7 +83,7 @@ df_plays_wrangled <- df_plays %>%
   mutate(yards_to_endzone = absoluteYardlineNumber - 10) %>% 
   select(
     gameId, playId,
-    offenseFormation, off_personnel, def_personnel, dropBackCategory, coverage,
+    offenseFormation, off_personnel, def_personnel, dropBackCategory, pff_passCoverage,
     quarter, down, yardsToGo, yards_to_endzone, defendersInBox, pff_playAction
   )
 
@@ -96,7 +106,7 @@ df_pff <- df_pff %>%
 
 # Frames of interest ------------------------------------------------------
 
-df_tracking <- df_tracking %>% 
+df_tracking <- df_tracking_import %>% 
   #filter to relevant plays
   inner_join(select(df_plays_wrangled, gameId, playId), by = c("gameId", "playId")) %>% 
   group_by(gameId, playId) %>% 
@@ -128,17 +138,12 @@ df_pff_pocket <- df_pff %>%
 
 #filter to blocking OL and passing QB
 
-# df_pocket <- df_tracking %>% 
-#   inner_join(
-#     select(df_pff_pocket, gameId, playId, nflId, pff_positionLinedUp), 
-#     by = c("gameId", "playId", "nflId")
-#   )
-
-df_pff_pocket <- df_pff %>% 
-  filter(
-    (pff_positionLinedUp %in% ol_positions & pff_role == "Pass Block") |
-      pff_positionLinedUp == "QB" & pff_role == "Pass"
+df_pocket <- df_tracking %>%
+  inner_join(
+    select(df_pff_pocket, gameId, playId, nflId, pff_positionLinedUp),
+    by = c("gameId", "playId", "nflId")
   )
+
 
 #filter to only plays with 5 blocking OL and 1 passing QB
 df_pocket <- df_pocket %>% 
@@ -292,7 +297,7 @@ df_pocket <- df_pocket %>%
 
 # ready nested tracking with distances data frame
 df_tracknest <- readr::read_rds("data/df_tracknest.rds")
-df_tracknest_2frames <- head(df_tracknest, 2)
+#df_tracknest_2frames <- head(df_tracknest, 2)
 
 #add player Ids to main tracking data
 df_pids <- unnest(df_tracknest, cols = c(data))
@@ -336,7 +341,7 @@ df_tracking <- df_tracking %>%
 # 
 # system.time(readr::write_rds(df_nearoppo, "data/df_nearoppo.rds")) #elapsed 0.81
 
-df_nearoppo <- readr::read_rds(df_nearoppo, "data/df_nearoppo.rds")
+df_nearoppo <- readr::read_rds("data/df_nearoppo.rds")
 
 df_tracking <- df_tracking %>% inner_join(df_nearoppo, by = c("gameId", "playId", "frameId", "playerId"))
 
@@ -349,9 +354,7 @@ df_tracking <- df_tracking %>%
   ungroup()
 
 
-
-
-#join pff and add QB coordinate columns
+#add QB coordinate columns
 df_tracking <- df_tracking %>% 
   group_by(gameId, playId, frameId) %>% 
   mutate(across(.cols = c(x,y), .fns = function(z) z[pff_positionLinedUp == "QB"], .names = "{.col}_QB")) %>% 
@@ -393,6 +396,70 @@ df_tracking <- df_tracking %>%
 #defenders to receivers - maybe just most open receiver
 #number of rushers, blockers
 #position of rusher, blockers - DL v LB, etc. OL vs RB vs TE, etc.
+
+
+#multiple blockers blocking 1 rusher causes adding rows to tracking data in next step
+rushed_ids <- df_tracking %>% 
+  filter(!is.na(pff_nflIdBlockedPlayer)) %>% 
+  group_by(gameId, playId, nflId) %>% 
+  summarise(pff_nflIdBlockedPlayer = unique(pff_nflIdBlockedPlayer)) %>% 
+  ungroup() %>% 
+  select(gameId, playId, pff_nflIdRushedPlayer = nflId, nflId = pff_nflIdBlockedPlayer)
+
+rushed_ids %>% select(-pff_nflIdRushedPlayer) %>% distinct()
+
+df_tracking %>% 
+  left_join(rushed_ids, by = c("gameId", "playId", "nflId"))
+
+df_dists <- df_tracknest %>%
+  unnest(cols = dists) %>%
+  select(-data) %>%
+  filter(playerId != otherplayerId) 
+
+df_tracking_roles <- df_tracking %>% select(gameId, playId, frameId, playerId, pff_nflIdBlockedPlayer, pff_role)
+
+system.time(
+  df_dists_joined <- df_dists %>%
+    inner_join(
+      df_tracking_roles,
+      by = c("gameId", "playId", "frameId", "playerId")
+    ) 
+)
+
+df_dists_joined <- df_dists_joined%>%
+  inner_join(
+    df_tracking_roles,
+    by = c("gameId", "playId", "frameId", "otherplayerId" = "playerId"),
+    suffix = c("", "_other")
+  )
+
+
+
+
+oneframe <- df_dists_joined %>% 
+  filter(gameId == min(gameId)) %>% 
+  filter(playId == min(playId)) %>% 
+  filter(frameId == min(frameId))
+  
+df_dists_joined %>% 
+  group_by(gameId, playId, frameId, playerId) %>%
+  summarise(
+    near_oppo_pid = otherplayerId[dist == min(dist)],
+    near_oppo_nflId = nflId_other[dist == min(dist)],
+    near_oppo_dist = min(dist)
+  ) %>%
+  ungroup()
+
+
+
+
+#distance between LT and RT (TEs??)
+
+edge_rushers <- c("LEO", "REO", "LE", "RE")
+
+
+
+
 
 
 # assemble data to model --------------------------------------------------
