@@ -14,6 +14,7 @@ library(ranger)
 library(MLmetrics)
 library(fastshap)
 
+library(xgboost)
 
 # Constants ---------------------------------------------------------------
 
@@ -91,11 +92,31 @@ bind_preds <- function(obj) {
 
 df_block_2model <- readr::read_rds(file.path(data_folder, "df_block_2model.rds"))
 df_rush_2model <- readr::read_rds(file.path(data_folder, "df_rush_2model.rds"))
+df_plays <- read_csv(file.path(data_folder, "plays.csv"))
 
 # Summarise data ----------------------------------------------------------
 
-skim_block <- skimr::skim(df_block_2model)
-skim_rush <- skimr::skim(df_rush_2model)
+df_plays4model <- df_plays %>% 
+  mutate(
+    num_rb = str_remove(str_extract(personnelO, "[0-9] RB"), " RB"),
+    num_te = str_remove(str_extract(personnelO, "[0-9] TE"), " TE"),
+    num_wr = str_remove(str_extract(personnelO, "[0-9] WR"), " WR"),
+  ) %>% 
+  mutate(
+    num_dl = str_remove(str_extract(personnelD, "[0-9] DL"), " DL"),
+    num_lb = str_remove(str_extract(personnelD, "[0-9] LB"), " LB"),
+    num_db = str_remove(str_extract(personnelD, "[0-9] DB"), " DB"),
+  ) %>% 
+  mutate(across(starts_with("num"), as.integer)) %>% 
+  select(ends_with("Id"), starts_with("num"), pff_passCoverageType)
+
+df_block_2model <- df_block_2model %>% 
+  inner_join(df_plays4model, by = c("gameId", "playId"))
+
+df_rush_2model <- df_rush_2model %>% 
+  inner_join(df_plays4model, by = c("gameId", "playId"))
+
+
 
 feature_names <- c(
   #"gameId", 
@@ -137,21 +158,98 @@ feature_names <- c(
   "qb_to_sideline",
   "frames_from_start",
   "offenseFormation",
-  "off_personnel",
-  "def_personnel",
+  #"off_personnel",
+  #"def_personnel",
   "dropBackCategory",
-  "coverage",
+  #"coverage",
   "quarter",
   "down",
   "yardsToGo",
   "yards_to_endzone",
   "defendersInBox",
   "pff_playAction",
-  "pocket_size"
+  "pocket_size",
+  "num_rb",
+  "num_te",
+  "num_wr",
+  "num_dl",
+  "num_lb",
+  "num_db",
+  "pff_passCoverageType"
 )
 
+skim_block <- df_block_2model %>% select(all_of(feature_names)) %>% skimr::skim()
+skim_rush <- df_rush_2model %>% select(feature_names) %>% skimr::skim()
+
+library(fastDummies)
+
+cols2dummy <- c("offenseFormation", "pff_passCoverageType", "dropBackCategory")
+
+df_block_2model <- fastDummies::dummy_cols(df_block_2model, 
+                        select_columns = cols2dummy)
+
+df_rush_2model <- fastDummies::dummy_cols(df_rush_2model, 
+                                           select_columns = cols2dummy)
 
 
+dummy_names <- names(df_block_2model)[str_detect(names(df_block_2model), paste(cols2dummy,collapse="|"))]
+dummy_names <- dummy_names[!dummy_names %in% cols2dummy]
+
+feature_names <- feature_names[!feature_names %in% cols2dummy]
+feature_names <- c(feature_names, dummy_names)
+
+
+
+# tidymodels training -----------------------------------------------------
+
+library(tidymodels)
+
+block_data_split <- rsample::initial_split(df_block_2model, prop = 0.75, strata = pressure_allowed)
+block_train <- training(block_data_split)
+block_test <- testing(block_data_split)
+
+rush_data_split <- rsample::initial_split(df_rush_2model, prop = 0.75, strata = pressure_delivered)
+rush_train <- training(rush_data_split)
+rush_test <- testing(rush_data_split)
+
+feature_formula <- paste(feature_names, collapse = "+")
+block_formula <- paste("pressure_allowed", feature_formula, sep = " ~ ")
+rush_formula <- paste("pressure_delivered", feature_formula, sep = " ~ ")
+
+block_recipe <- recipe(block_train, block_formula)
+rush_recipe <- recipe(rush_train, rush_formula)
+
+ranger_spec <- rand_forest(
+  trees = 1000,
+  mtry = tune(),
+  min_n = tune()
+) %>%
+  set_engine("ranger") %>%
+  set_mode("classification")
+
+block_cv <- vfold_cv(block_train, v = 10, strata = pressure_allowed)
+rush_cv <- vfold_cv(rush_train, v = 10, strata = pressure_delivered)
+
+block_results <- tune_grid(
+  ranger_spec,
+  preprocessor = block_recipe,
+  resamples = block_cv,
+  grid = 10,
+  metrics = metric_set(yardstick::mn_log_loss),
+  control = control_grid(save_pred = TRUE)
+)
+
+rush_results <- tune_grid(
+  ranger_spec,
+  preprocessor = rush_recipe,
+  resamples = rush_cv,
+  grid = 10,
+  metrics = metric_set(yardstick::mn_log_loss),
+  control = control_grid(save_pred = TRUE)
+)
+
+readr::write_rds(block_results, file.path(data_folder, "block_tidymodel_results.rds"))
+readr::write_rds(rush_results, file.path(data_folder, "rush_tidymodel_results.rds"))
 
 
 # Split data --------------------------------------------------------------
@@ -169,12 +267,8 @@ model_list <- list(
 rm(df_block_2model)
 rm(df_rush_2model)
 
-
-
 model_list$block$formula <- create_formula(model_list$block$target)
 model_list$rush$formula <- create_formula(model_list$rush$target)
-
-
 
 ds_block <- split_data(model_list$block$df_all, 0.75, model_list$block$target)
 model_list$block$df_train <- ds_block[["trn"]]
@@ -189,6 +283,15 @@ model_list$rush$df_all <- NULL
 rm(ds_rush)
 
 # Model training ----------------------------------------------------------
+
+# df_train <- model_list$block$df_train
+# rmatrix_features <-  df_train %>% select(all_of(feature_names)) %>% as.matrix()
+# 
+# xgbmatrix_train <- xgboost::xgb.DMatrix(data = rmatrix_features, label = df_train$pressure_allowed)
+# 
+# bstDMatrix <- xgboost(data = dtrain, max.depth = 2, eta = 1, nthread = 2, nrounds = 2, objective = "binary:logistic")
+
+
 
 # system.time(
 #   model_list$block$rf0 <- ranger::ranger(model_list$block$formula, data = model_list$block$df_train, probability = TRUE)
