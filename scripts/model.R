@@ -237,7 +237,7 @@ block_results <- tune_grid(
   ranger_spec,
   preprocessor = block_recipe,
   resamples = block_cv,
-  grid = 10,
+  grid = 20,
   metrics = metric_set(yardstick::mn_log_loss),
   control = control_grid(save_pred = TRUE)
 )
@@ -246,7 +246,7 @@ rush_results <- tune_grid(
   ranger_spec,
   preprocessor = rush_recipe,
   resamples = rush_cv,
-  grid = 10,
+  grid = 20,
   metrics = metric_set(yardstick::mn_log_loss),
   control = control_grid(save_pred = TRUE)
 )
