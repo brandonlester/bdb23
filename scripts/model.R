@@ -233,26 +233,35 @@ rush_cv <- vfold_cv(rush_train, v = 10, strata = pressure_delivered)
 # TRAIN MODELS ------------------------------------------------------------
 
 
-block_results <- tune_grid(
-  ranger_spec,
-  preprocessor = block_recipe,
-  resamples = block_cv,
-  grid = 20,
-  metrics = metric_set(yardstick::mn_log_loss),
-  control = control_grid(save_pred = TRUE)
+system.time(
+  block_results <- tune_grid(
+    ranger_spec,
+    preprocessor = block_recipe,
+    resamples = block_cv,
+    grid = 20,
+    metrics = metric_set(yardstick::mn_log_loss),
+    control = control_grid(save_pred = TRUE)
+  )
 )
 
-rush_results <- tune_grid(
-  ranger_spec,
-  preprocessor = rush_recipe,
-  resamples = rush_cv,
-  grid = 20,
-  metrics = metric_set(yardstick::mn_log_loss),
-  control = control_grid(save_pred = TRUE)
+system.time(
+  rush_results <- tune_grid(
+    ranger_spec,
+    preprocessor = rush_recipe,
+    resamples = rush_cv,
+    grid = 20,
+    metrics = metric_set(yardstick::mn_log_loss),
+    control = control_grid(save_pred = TRUE)
+  )
 )
 
-readr::write_rds(block_results, file.path(data_folder, "block_tidymodel_results.rds"))
-readr::write_rds(rush_results, file.path(data_folder, "rush_tidymodel_results.rds"))
+system.time(
+  readr::write_rds(block_results, file.path(data_folder, "block_tidymodel_results.rds"))
+)
+
+system.time(
+  readr::write_rds(rush_results, file.path(data_folder, "rush_tidymodel_results.rds"))
+)
 
 
 # Split data --------------------------------------------------------------
