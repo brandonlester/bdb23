@@ -97,109 +97,63 @@ df_plays <- read_csv(file.path(data_folder, "plays.csv"))
 
 # Summarise data ----------------------------------------------------------
 
-df_plays4model <- df_plays %>% 
-  mutate(
-    num_rb = str_remove(str_extract(personnelO, "[0-9] RB"), " RB"),
-    num_te = str_remove(str_extract(personnelO, "[0-9] TE"), " TE"),
-    num_wr = str_remove(str_extract(personnelO, "[0-9] WR"), " WR"),
-  ) %>% 
-  mutate(
-    num_dl = str_remove(str_extract(personnelD, "[0-9] DL"), " DL"),
-    num_lb = str_remove(str_extract(personnelD, "[0-9] LB"), " LB"),
-    num_db = str_remove(str_extract(personnelD, "[0-9] DB"), " DB"),
-  ) %>% 
-  mutate(across(starts_with("num"), as.integer)) %>% 
-  select(ends_with("Id"), starts_with("num"), pff_passCoverageType)
 
-df_block_2model <- df_block_2model %>% 
-  inner_join(df_plays4model, by = c("gameId", "playId"))
-
-df_rush_2model <- df_rush_2model %>% 
-  inner_join(df_plays4model, by = c("gameId", "playId"))
-
-
+skim_block <- skimr::skim(df_block_2model)
+skim_rush <- skimr::skim(df_rush_2model)
 
 feature_names <- c(
-  #"gameId", 
-  #"playId",
-  #"nflId",
-  #"frameId",
-  #"time", 
-  #"jerseyNumber",
-  #"team",
-  #"playDirection",
-  #"x", #TODO???
-  #"y", #TODO???
-  #"s", #TODO???
-  #"a", #TODO???
-  #"dis", #TODO???
-  #"o", #TODO???
-  #"dir", #TODO???
-  #"event",
-  #"start_frame",
-  #"end_frame",
-  #"playerId",
-  #"possessionTeam",
-  #"side_of_ball",
-  #"pff_nflIdBlockedPlayer",
-  #"pressure_allowed",
-  #"pressure_delivered",
-  #"pff_positionLinedUp", #TODO???
-  #"pff_role",
-  #"near_oppo_pid",
-  #"near_oppo_nflId",
-  "near_oppo_dist",
-  #"other_near_oppo_nflId",
-  #"x_QB",
-  #"y_QB",
-  "dist_to_qb",
-  "most_open_rec",
-  "num_blockers",
-  "num_rushers",
-  "qb_to_sideline",
-  "frames_from_start",
+  #"pff_positionLinedUp", #???
   "offenseFormation",
-  #"off_personnel",
-  #"def_personnel",
-  "dropBackCategory",
-  #"coverage",
-  "quarter",
-  "down",
-  "yardsToGo",
-  "yards_to_endzone",
-  "defendersInBox",
-  "pff_playAction",
-  "pocket_size",
   "num_rb",
   "num_te",
   "num_wr",
   "num_dl",
   "num_lb",
   "num_db",
-  "pff_passCoverageType"
+  "dropBackCategory",
+  "pff_passCoverageType",
+  "near_oppo_dist",
+  "dist_to_qb",
+  "most_open_rec",
+  "num_blockers",
+  "num_rushers",
+  "qb_to_sideline",
+  "frames_from_start",
+  "nearest_trench_dist",
+  "quarter",
+  "down",
+  "yardsToGo",
+  "yards_to_endzone",
+  "defendersInBox",
+  "pff_playAction",
+  "pocket_size"
 )
 
-skim_block <- df_block_2model %>% select(all_of(feature_names)) %>% skimr::skim()
-skim_rush <- df_rush_2model %>% select(feature_names) %>% skimr::skim()
-
+skim_block_features <- skimr::skim(select(df_block_2model, all_of(feature_names)))
+skim_rush_features <- skimr::skim(select(df_rush_2model, all_of(feature_names)))
 
 
 cols2dummy <- c("offenseFormation", "pff_passCoverageType", "dropBackCategory")
 
-df_block_2model <- fastDummies::dummy_cols(df_block_2model, 
-                        select_columns = cols2dummy)
-
-df_rush_2model <- fastDummies::dummy_cols(df_rush_2model, 
-                                           select_columns = cols2dummy)
 
 
+df_block_2model <- df_block_2model %>% 
+  mutate(across(starts_with("num_"), as.integer)) %>% 
+  filter(!is.na(nearest_trench_dist)) %>% 
+  fastDummies::dummy_cols(select_columns = cols2dummy) %>% 
+  mutate(pressure_allowed = as.factor(pressure_allowed))
+  
+df_rush_2model <- df_rush_2model %>% 
+  mutate(across(starts_with("num_"), as.integer)) %>% 
+  filter(!is.na(nearest_trench_dist)) %>% 
+  fastDummies::dummy_cols(select_columns = cols2dummy) %>% 
+  mutate(pressure_delivered = as.factor(pressure_delivered))
+
+#update feature_names after dummy encoding
 dummy_names <- names(df_block_2model)[str_detect(names(df_block_2model), paste(cols2dummy,collapse="|"))]
 dummy_names <- dummy_names[!dummy_names %in% cols2dummy]
-
 feature_names <- feature_names[!feature_names %in% cols2dummy]
 feature_names <- c(feature_names, dummy_names)
-
-
 
 # tidymodels training -----------------------------------------------------
 
@@ -219,9 +173,9 @@ block_recipe <- recipe(block_train, block_formula)
 rush_recipe <- recipe(rush_train, rush_formula)
 
 ranger_spec <- rand_forest(
-  trees = 1000,
-  mtry = tune(),
-  min_n = tune()
+  # trees = 1000,
+  # mtry = tune(),
+  # min_n = tune()
 ) %>%
   set_engine("ranger") %>%
   set_mode("classification")
@@ -238,7 +192,7 @@ system.time(
     ranger_spec,
     preprocessor = block_recipe,
     resamples = block_cv,
-    grid = 20,
+    #grid = 20,
     metrics = metric_set(yardstick::mn_log_loss),
     control = control_grid(save_pred = TRUE)
   )
@@ -249,7 +203,7 @@ system.time(
     ranger_spec,
     preprocessor = rush_recipe,
     resamples = rush_cv,
-    grid = 20,
+    #grid = 20,
     metrics = metric_set(yardstick::mn_log_loss),
     control = control_grid(save_pred = TRUE)
   )

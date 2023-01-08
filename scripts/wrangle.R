@@ -71,7 +71,7 @@ df_plays_wrangled <- df_plays %>%
     num_dl = str_remove(str_extract(personnelD, "[0-9] DL"), " DL"),
     num_lb = str_remove(str_extract(personnelD, "[0-9] LB"), " LB"),
     num_db = str_remove(str_extract(personnelD, "[0-9] DB"), " DB"),
-  )
+  ) %>% 
   mutate(
     dropBackCategory = case_when(
       str_detect(dropBackType, "DESIGNED_ROLLOUT") ~ "rollout",
@@ -83,20 +83,20 @@ df_plays_wrangled <- df_plays %>%
   mutate(yards_to_endzone = absoluteYardlineNumber - 10) %>% 
   select(
     gameId, playId,
-    offenseFormation, off_personnel, def_personnel, dropBackCategory, pff_passCoverage,
+    offenseFormation, num_rb, num_te, num_wr, num_dl, num_lb, num_db, dropBackCategory, pff_passCoverageType,
     quarter, down, yardsToGo, yards_to_endzone, defendersInBox, pff_playAction
   )
 
 
 # Target variable ---------------------------------------------------------
 
-df_plays %>% count(passResult, sort = T)
+#df_plays %>% count(passResult, sort = T)
 df_plays <- df_plays %>% mutate(sack = ifelse(passResult == "S", 1, 0))
 
-df_pff %>% 
-  filter(pff_positionLinedUp %in% ol_positions) %>% 
-  select(pff_beatenByDefender, pff_hitAllowed, pff_hurryAllowed, pff_sackAllowed) %>% 
-  summary()
+# df_pff %>% 
+#   filter(pff_positionLinedUp %in% ol_positions) %>% 
+#   select(pff_beatenByDefender, pff_hitAllowed, pff_hurryAllowed, pff_sackAllowed) %>% 
+#   summary()
 
 df_pff <- df_pff %>% 
   mutate(
@@ -133,11 +133,7 @@ df_pff_pocket <- df_pff %>%
       pff_positionLinedUp == "QB" & pff_role == "Pass"
   )
 
-#write_rds(df_pff_pocket, "data/df_pff_pocket.rds")
-
-
 #filter to blocking OL and passing QB
-
 df_pocket <- df_tracking %>%
   inner_join(
     select(df_pff_pocket, gameId, playId, nflId, pff_positionLinedUp),
@@ -382,124 +378,15 @@ df_tracking <- df_tracking %>%
   mutate(qb_to_sideline = ifelse(y_QB > y_max/2, y_max - y_QB, y_QB)) %>% 
   mutate(frames_from_start = frameId - start_frame)
 
-
-
-
-# create additional features ----------------------------------------------
-#summarize at gameId, playId, frameId level
-
-###from tracking data
-#distance from each defender to QB, to each other
-#distance from each pass blocker to QB, to each other
-#s, a, dis, o of QB, rushers, blockers
-
-#defenders to receivers - maybe just most open receiver
-#number of rushers, blockers
-#position of rusher, blockers - DL v LB, etc. OL vs RB vs TE, etc.
-
-
-#multiple blockers blocking 1 rusher causes adding rows to tracking data in next step
-rushed_ids <- df_tracking %>% 
-  filter(!is.na(pff_nflIdBlockedPlayer)) %>% 
-  group_by(gameId, playId, nflId) %>% 
-  summarise(pff_nflIdBlockedPlayer = unique(pff_nflIdBlockedPlayer)) %>% 
-  ungroup() %>% 
-  select(gameId, playId, pff_nflIdRushedPlayer = nflId, nflId = pff_nflIdBlockedPlayer)
-
-rushed_ids %>% select(-pff_nflIdRushedPlayer) %>% distinct()
-
-df_tracking %>% 
-  left_join(rushed_ids, by = c("gameId", "playId", "nflId"))
-
+#save distances
 df_dists <- df_tracknest %>%
   unnest(cols = dists) %>%
   select(-data) %>%
-  filter(playerId != otherplayerId) 
+  filter(playerId != otherplayerId) %>% 
+  mutate(across(-dist, as.integer))
 
-df_tracking_roles <- df_tracking %>% select(gameId, playId, frameId, playerId, pff_nflIdBlockedPlayer, pff_role)
+readr::write_rds(df_dists, file.path(data_folder, "df_unnested_dists.rds"))
 
-system.time(
-  df_dists_joined <- df_dists %>%
-    inner_join(
-      df_tracking_roles,
-      by = c("gameId", "playId", "frameId", "playerId")
-    ) 
-)
-
-df_dists_joined <- df_dists_joined%>%
-  inner_join(
-    df_tracking_roles,
-    by = c("gameId", "playId", "frameId", "otherplayerId" = "playerId"),
-    suffix = c("", "_other")
-  )
-
-
-
-
-oneframe <- df_dists_joined %>% 
-  filter(gameId == min(gameId)) %>% 
-  filter(playId == min(playId)) %>% 
-  filter(frameId == min(frameId))
-  
-df_dists_joined %>% 
-  group_by(gameId, playId, frameId, playerId) %>%
-  summarise(
-    near_oppo_pid = otherplayerId[dist == min(dist)],
-    near_oppo_nflId = nflId_other[dist == min(dist)],
-    near_oppo_dist = min(dist)
-  ) %>%
-  ungroup()
-
-
-
-
-#distance between LT and RT (TEs??)
-
-edge_rushers <- c("LEO", "REO", "LE", "RE")
-
-
-
-
-
-
-# assemble data to model --------------------------------------------------
-
-
-skim_tracking <- skimr::skim(df_tracking)
-skim_plays <- skimr::skim(df_plays_wrangled)
-
-df_joined <- df_tracking %>% 
-  inner_join(df_plays_wrangled, by = c("gameId", "playId")) %>%
-  inner_join(df_pocket, by = c("gameId", "playId", "frameId"))
-
-
-df_block_2model <- df_joined %>% filter(pff_role == "Pass Block")
-
-all(sum(is.na(df_block_2model$pressure_allowed)) == 0,
-    sum(!is.na(df_block_2model$pressure_delivered)) == 0)
-
-
-df_rush_2model <- df_joined %>% filter(pff_role == "Pass Rush")
-
-all(sum(!is.na(df_rush_2model$pressure_allowed)) == 0,
-    sum(is.na(df_rush_2model$pressure_delivered)) == 0)
-
-
-readr::write_rds(df_block_2model, "data/df_block_2model.rds")
-readr::write_rds(df_rush_2model, "data/df_rush_2model.rds")
-
-
-
-
-
-# 
-# df_2model_player <- df_tracking_dists %>% 
-#   filter(pff_role %in% def_roles) %>% 
-#   select(contains("Id"), dist_to_qb, pff_sack)
-# 
-# 
-# df_2model <- df_pocket_sizes %>% 
-#   inner_join(select(df_plays, gameId, playId, sack), by = c("gameId", "playId"))
-
-#readr::write_rds(df_2model, file.path(data_folder, "df_2model.rds"))
-#readr::write_rds(df_2model_player, file.path(data_folder, "df_2model_player.rds"))
+readr::write_rds(df_tracking, file.path(data_folder, "df_tracking_origvars.rds"))
+readr::write_rds(df_pocket, file.path(data_folder, "df_pocket_sizes.rds"))
+readr::write_rds(df_plays_wrangled, file.path(data_folder, "df_plays_wrangled.rds"))
