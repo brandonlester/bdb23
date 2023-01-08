@@ -13,8 +13,9 @@ library(rsample)
 library(ranger)
 library(MLmetrics)
 library(fastshap)
-
-library(xgboost)
+library(tidymodels)
+library(fastDummies)
+#library(xgboost)
 
 # Constants ---------------------------------------------------------------
 
@@ -181,7 +182,7 @@ feature_names <- c(
 skim_block <- df_block_2model %>% select(all_of(feature_names)) %>% skimr::skim()
 skim_rush <- df_rush_2model %>% select(feature_names) %>% skimr::skim()
 
-library(fastDummies)
+
 
 cols2dummy <- c("offenseFormation", "pff_passCoverageType", "dropBackCategory")
 
@@ -201,8 +202,6 @@ feature_names <- c(feature_names, dummy_names)
 
 
 # tidymodels training -----------------------------------------------------
-
-library(tidymodels)
 
 block_data_split <- rsample::initial_split(df_block_2model, prop = 0.75, strata = pressure_allowed)
 block_train <- training(block_data_split)
@@ -229,6 +228,10 @@ ranger_spec <- rand_forest(
 
 block_cv <- vfold_cv(block_train, v = 10, strata = pressure_allowed)
 rush_cv <- vfold_cv(rush_train, v = 10, strata = pressure_delivered)
+
+
+# TRAIN MODELS ------------------------------------------------------------
+
 
 block_results <- tune_grid(
   ranger_spec,
