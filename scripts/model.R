@@ -95,6 +95,9 @@ df_block_2model <- readr::read_rds(file.path(data_folder, "df_block_2model.rds")
 df_rush_2model <- readr::read_rds(file.path(data_folder, "df_rush_2model.rds"))
 df_plays <- read_csv(file.path(data_folder, "plays.csv"))
 
+df_tracking <- readr::read_rds(file.path(data_folder, "df_tracking_foi.rds"))
+
+
 # Summarise data ----------------------------------------------------------
 
 
@@ -169,84 +172,76 @@ feature_formula <- paste(feature_names, collapse = "+")
 block_formula <- paste("pressure_allowed", feature_formula, sep = " ~ ")
 rush_formula <- paste("pressure_delivered", feature_formula, sep = " ~ ")
 
-block_recipe <- recipe(block_train, block_formula)
-rush_recipe <- recipe(rush_train, rush_formula)
-
-ranger_spec <- rand_forest(
-  # trees = 1000,
-  # mtry = tune(),
-  # min_n = tune()
-) %>%
-  set_engine("ranger") %>%
-  set_mode("classification")
-
-block_cv <- vfold_cv(block_train, v = 10, strata = pressure_allowed)
-rush_cv <- vfold_cv(rush_train, v = 10, strata = pressure_delivered)
+# block_recipe <- recipe(block_train, block_formula)
+# rush_recipe <- recipe(rush_train, rush_formula)
+# 
+# ranger_spec <- rand_forest(
+#   # trees = 1000,
+#   # mtry = tune(),
+#   # min_n = tune()
+# ) %>%
+#   set_engine("ranger") %>%
+#   set_mode("classification")
+# 
+# block_cv <- vfold_cv(block_train, v = 10, strata = pressure_allowed)
+# rush_cv <- vfold_cv(rush_train, v = 10, strata = pressure_delivered)
 
 
 # TRAIN MODELS ------------------------------------------------------------
 
 
-system.time(
-  block_results <- tune_grid(
-    ranger_spec,
-    preprocessor = block_recipe,
-    resamples = block_cv,
-    #grid = 20,
-    metrics = metric_set(yardstick::mn_log_loss),
-    control = control_grid(save_pred = TRUE)
-  )
-)
-
-system.time(
-  rush_results <- tune_grid(
-    ranger_spec,
-    preprocessor = rush_recipe,
-    resamples = rush_cv,
-    #grid = 20,
-    metrics = metric_set(yardstick::mn_log_loss),
-    control = control_grid(save_pred = TRUE)
-  )
-)
-
-system.time(
-  readr::write_rds(block_results, file.path(data_folder, "block_tidymodel_results.rds"))
-)
-
-system.time(
-  readr::write_rds(rush_results, file.path(data_folder, "rush_tidymodel_results.rds"))
-)
+# system.time(
+#   block_results <- tune_grid(
+#     ranger_spec,
+#     preprocessor = block_recipe,
+#     resamples = block_cv,
+#     #grid = 20,
+#     metrics = metric_set(yardstick::mn_log_loss),
+#     control = control_grid(save_pred = TRUE)
+#   )
+# )
+# 
+# system.time(
+#   rush_results <- tune_grid(
+#     ranger_spec,
+#     preprocessor = rush_recipe,
+#     resamples = rush_cv,
+#     #grid = 20,
+#     metrics = metric_set(yardstick::mn_log_loss),
+#     control = control_grid(save_pred = TRUE)
+#   )
+# )
+# 
+# system.time(
+#   readr::write_rds(block_results, file.path(data_folder, "block_tidymodel_results.rds"))
+# )
+# 
+# system.time(
+#   readr::write_rds(rush_results, file.path(data_folder, "rush_tidymodel_results.rds"))
+# )
 
 
 # Split data --------------------------------------------------------------
 
 model_list <- list(
   block = list(
-    df_all = df_block_2model,
+    df_train = block_train,
+    df_test = block_test,
+    formula = block_formula,
     target = "pressure_allowed"
   ),
   rush = list(
-    df_all = df_rush_2model,
+    df_train = rush_train,
+    df_test = rush_test,
+    formula = rush_formula,
     target = "pressure_delivered"
   )
 )
-rm(df_block_2model)
-rm(df_rush_2model)
 
-model_list$block$formula <- create_formula(model_list$block$target)
-model_list$rush$formula <- create_formula(model_list$rush$target)
 
-ds_block <- split_data(model_list$block$df_all, 0.75, model_list$block$target)
-model_list$block$df_train <- ds_block[["trn"]]
-model_list$block$df_test <- ds_block[["tst"]]
-model_list$block$df_all <- NULL
-rm(ds_block)
+# model_list$block$formula <- create_formula(model_list$block$target)
+# model_list$rush$formula <- create_formula(model_list$rush$target)
 
-ds_rush <- split_data(model_list$rush$df_all, 0.75, model_list$rush$target)
-model_list$rush$df_train <- ds_rush[["trn"]]
-model_list$rush$df_test <- ds_rush[["tst"]]
-model_list$rush$df_all <- NULL
-rm(ds_rush)
 
 # Model training ----------------------------------------------------------
 
@@ -260,54 +255,123 @@ rm(ds_rush)
 
 
 # system.time(
-#   model_list$block$rf0 <- ranger::ranger(model_list$block$formula, data = model_list$block$df_train, probability = TRUE)
+#   model_list$block$rf0 <- ranger::ranger(
+#     model_list$block$formula, 
+#     data = model_list$block$df_train, 
+#     probability = TRUE
+#   )
 # ) #elapsed 475.89
 # 
 # system.time(
-#   model_list$rush$rf0 <- ranger::ranger(model_list$rush$formula, data = model_list$rush$df_train, probability = TRUE)
+#   model_list$rush$rf0 <- ranger::ranger(
+#     model_list$rush$formula, 
+#     data = model_list$rush$df_train, 
+#     probability = TRUE
+#   )
 # ) #elapsed 375.97
+
+
+
+system.time(
+  model_list$block$rf0 <- ranger::ranger(
+    model_list$block$formula, 
+    data = df_block_2model, #training on all data, use OOB predictions
+    probability = TRUE,
+    num.trees = 1000
+  )
+) #elapsed 1646.20
+
+system.time(
+  model_list$rush$rf0 <- ranger::ranger(
+    model_list$rush$formula, 
+    data = df_rush_2model,  #training on all data, use OOB predictions
+    probability = TRUE,
+    num.trees = 1000
+  )
+) #elapsed 1355.70
+
+
+readr::write_rds(model_list, file.path(data_folder, "model_list.rds"))
+
+#model_list <- readr::read_rds("data/model_list.rds")
+
+# block_preds <- get_predictions(model_list$block, mod_name = "rf0")
+# rush_preds <- get_predictions(model_list$rush, mod_name = "rf0")
+
+# model_list$block$preds_trn <- block_preds$trn_preds
+# model_list$block$preds_tst <- block_preds$tst_preds
 # 
-# readr::write_rds(model_list, "data/model_list.rds")
+# model_list$rush$preds_trn <- rush_preds$trn_preds
+# model_list$rush$preds_tst <- rush_preds$tst_preds
 
 
-model_list <- readr::read_rds("data/model_list.rds")
+block_preds <- as_tibble(model_list$block$rf0$predictions)
+names(block_preds)[names(block_preds) == 1] <- paste0("pred_", model_list$block$target)
+names(block_preds)[names(block_preds) == 0] <- paste0("pred_no_", model_list$block$target)
 
-block_preds <- get_predictions(model_list$block, mod_name = "rf0")
-rush_preds <- get_predictions(model_list$rush, mod_name = "rf0")
+rush_preds <- as_tibble(model_list$rush$rf0$predictions)
+names(rush_preds)[names(rush_preds) == 1] <- paste0("pred_", model_list$rush$target)
+names(rush_preds)[names(rush_preds) == 0] <- paste0("pred_no_", model_list$rush$target)
 
-model_list$block$preds_trn <- block_preds$trn_preds
-model_list$block$preds_tst <- block_preds$tst_preds
-
-model_list$rush$preds_trn <- rush_preds$trn_preds
-model_list$rush$preds_tst <- rush_preds$tst_preds
+# model_list$block$metrics <- calc_metrics(model_list$block)
+# model_list$rush$metrics <- calc_metrics(model_list$rush)
 
 
 
-model_list$block$metrics <- calc_metrics(model_list$block)
-model_list$rush$metrics <- calc_metrics(model_list$rush)
 
-guess_brier <- 0.25
+block_results <- bind_cols(df_block_2model, block_preds)
+block_results$pressure_allowed <- as.integer(as.character(block_results$pressure_allowed))
+
+rush_results <- bind_cols(df_rush_2model, rush_preds)
+rush_results$pressure_delivered <- as.integer(as.character(rush_results$pressure_delivered))
+
 
 # Model eval --------------------------------------------------------------
+guess_brier <- 0.25
 
+brier_score(y_pred = block_results$pred_pressure_allowed, y_true = block_results$pressure_allowed)
+MLmetrics::LogLoss(y_pred = block_results$pred_pressure_allowed, y_true = block_results$pressure_allowed)
 
+brier_score(y_pred = rush_results$pred_pressure_delivered, y_true = rush_results$pressure_delivered)
+MLmetrics::LogLoss(y_pred = rush_results$pred_pressure_delivered, y_true = rush_results$pressure_delivered)
 
-model_list$block$df_all <- bind_preds(model_list$block)
-model_list$rush$df_all <- bind_preds(model_list$rush)
+first_model_results <- readr::read_rds(file.path(data_folder, "model_results.rds"))
+first_model_results$block$metrics
+first_model_results$rush$metrics
 
-model_list$block$df_train <- NULL
-model_list$block$df_test <- NULL
-model_list$block$preds_trn <- NULL
-model_list$block$preds_tst <- NULL
+# model_list$block$df_all <- bind_preds(model_list$block)
+# model_list$rush$df_all <- bind_preds(model_list$rush)
+# 
+# model_list$block$df_train <- NULL
+# model_list$block$df_test <- NULL
+# model_list$block$preds_trn <- NULL
+# model_list$block$preds_tst <- NULL
+# 
+# model_list$rush$df_train <- NULL
+# model_list$rush$df_test <- NULL
+# model_list$rush$preds_trn <- NULL
+# model_list$rush$preds_tst <- NULL
+# 
+# readr::write_rds(model_list, file.path(data_folder, "model_results.rds"))
 
-model_list$rush$df_train <- NULL
-model_list$rush$df_test <- NULL
-model_list$rush$preds_trn <- NULL
-model_list$rush$preds_tst <- NULL
+df_results <- df_tracking %>% 
+  left_join(select(block_results, gameId, playId, frameId, nflId, pred_pressure_allowed), by = c("gameId", "playId", "frameId", "nflId")) %>%
+  left_join(select(rush_results, gameId, playId, frameId, nflId, pred_pressure_delivered), by = c("gameId", "playId", "frameId", "nflId")) %>% 
+  group_by(gameId, playId, frameId) %>% 
+  filter(any(!is.na(pred_pressure_allowed))) %>% 
+  filter(any(!is.na(pred_pressure_delivered))) %>% 
+  ungroup()
 
+gc()
 
-readr::write_rds(model_list, "data/model_results.rds")
+readr::write_rds(block_results, file.path(data_folder, "block_results.rds"))
+readr::write_rds(rush_results, file.path(data_folder, "rush_results.rds"))
+readr::write_rds(df_results, file.path(data_folder, "df_results.rds"))
 
+kaggle_folder <- "data/for_kaggle"
+readr::write_csv(block_results, file.path(kaggle_folder, "block_results.csv"))
+readr::write_csv(rush_results, file.path(kaggle_folder, "rush_results.csv"))
+readr::write_csv(df_results, file.path(kaggle_folder, "df_results.csv"))
 
 # #shap values
 # df_shap <- explain(

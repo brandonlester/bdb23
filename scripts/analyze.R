@@ -32,6 +32,8 @@ library(kableExtra)
 library(gganimate)
 library(ggnewscale)
 library(magick)
+#library(plyr)
+library(sportyR)
 
 #source("scripts/dots.R")
 #^functions/constants from dots.R are duplicated in this script (analyze.R)
@@ -96,9 +98,9 @@ metric_summary <- function(df, target) {
       total_metric = sum(metric),
       avg_metric = mean(metric)
     ) %>% 
-    arrange(desc(avg_metric)) %>% 
+    ungroup() %>% 
     inner_join(df_players, by = "nflId") %>% 
-    filter(snaps >= 100)
+    filter(snaps >= 125)
 }
 
 adj_metric_summary <- function(df, metric_col, id_col) {
@@ -129,12 +131,15 @@ metric_table <- function(summary_metric, target) {
   
   temp_df <- summary_metric %>% 
     #head(10) %>% 
+    arrange(desc(avg_metric)) %>% 
     mutate(
+      Rank = dplyr::row_number(),
       avg_metric = round(avg_metric, 3),
       total_metric = round(total_metric, 3)
     ) %>% 
     select(
       nflId,
+      Rank,
       Name = displayName,
       Position = officialPosition,
       Snaps = snaps,
@@ -152,7 +157,6 @@ metric_table <- function(summary_metric, target) {
   
   return(temp_df)
 }
-
 combined_metrics <- function(metric_table, adj_metric_table) {
   metric_table %>% 
     inner_join(select(adj_metric_table, -Name, -Position), by = "nflId", suffix = c("", "_adj")) %>% 
@@ -167,12 +171,15 @@ compare_metrics <- function(df, xmet, ymet, lab_x, lab_y) {
   compare_cor <- cor(df[[xmet]], df[[ymet]])
   compare_cor <- paste("R2:", round(compare_cor,2))
   
+  title_x <- if(lab_y == "PAUE") "PFF Pass Block Grade" else "PFF Pass Rush Grade"
+  plot_title <- paste(lab_y, "vs", title_x)
+  
   
   ggplot(df, aes(x = !!as.name(xmet), y = !!as.name(ymet))) + 
     geom_point(alpha = 0.6) +
     geom_smooth(method = "lm", se = FALSE) + 
     geom_text(x = min(df[[xmet]]), y = max(df[[ymet]]), label = compare_cor) +
-    ggtitle("Metric Comparison") +
+    ggtitle(plot_title) +
     ylab(lab_y) +
     xlab(lab_x) +
     theme_minimal()
@@ -191,23 +198,35 @@ prep_example_for_plot <- function(tracking_df, game_id, play_id) {
   tracking_df %>% 
     filter(gameId == game_id & playId == play_id) %>%
     inner_join(select(df_plays, gameId, playId, playDescription, possessionTeam)) %>% 
-    std_coords()
+    std_coords() %>% 
+    mutate(size_of_point = ifelse(team == "football", 1, 7)) %>% 
+    mutate(prob = ifelse(!is.na(pred_pressure_allowed), pred_pressure_allowed, pred_pressure_delivered)) %>% 
+    mutate(side_of_ball = ifelse(team == possessionTeam | team == "football", "off", "def"))
 }
 
-prep_for_probplot <- function(df) {
+prep_for_probplot <- function(df, gid, pid) {
   df %>% 
-    filter(gameId == ex_gameId & playId == ex_playId) %>% 
+    filter(gameId == gid & playId == pid) %>% 
     inner_join(select(df_players, nflId, displayName), by = "nflId") %>% 
     mutate(nflId = as.character(nflId)) 
 }
 
-create_pocket_plot <- function(df_for_plot) {
+create_pocket_plot <- function(df, gid, pid) {
+  df_for_plot <- prep_example_for_plot(df, gid, pid)
+  
   df_for_plot_pocket <- df_for_plot %>% 
     inner_join(
       select(df_pff_pocket, gameId, playId, nflId, pff_positionLinedUp), 
       by = c("gameId", "playId", "nflId")
     ) %>% 
     arrange(factor(pff_positionLinedUp, levels = hex_points))
+  
+  start_yardline <- plyr::round_any(min(df_for_plot$x), 10, f = floor)
+  end_yardline <- plyr::round_any(max(df_for_plot$x), 10, f = ceiling)
+  x_breaks <- seq(start_yardline, end_yardline, 10)
+  x_labels <- x_breaks
+  x_labels[x_labels > 50] <- 100 - x_labels[x_labels > 50]
+  
   
   ggplot(data = filter(df_for_plot, side_of_ball == "off"), aes(x = x, y = y)) + 
     geom_polygon(data = df_for_plot_pocket, aes(x = x, y = y), fill = "blue", alpha = 0.1) +
@@ -218,6 +237,7 @@ create_pocket_plot <- function(df_for_plot) {
     scale_fill_gradient("def", low = "white", high = "orange") +
     geom_text(data = df_for_plot, aes(x = x, y = y, label = jerseyNumber, size = size_of_point*0.5), color = "black", vjust = 0.35) +
     scale_radius() +
+    scale_x_continuous(breaks = x_breaks, labels = x_labels) +
     ggtitle(df_for_plot$playDescription) +
     theme_minimal() +
     theme(
@@ -225,18 +245,19 @@ create_pocket_plot <- function(df_for_plot) {
       axis.title.x = element_blank(),
       axis.title.y = element_blank(),
       axis.text.y = element_blank(),
-      panel.grid.major.x = element_line(size = 1),
-      panel.grid.minor.x = element_line(size = 1),
+      axis.text.x = element_text(color = "darkgray"),
+      panel.grid.major.x = element_line(size = 1, color = "darkgray"),
+      panel.grid.minor.x = element_line(size = 1, color = "darkgray"),
       panel.grid.major.y = element_blank(),
-      panel.grid.minor.y = element_blank()#,
-      #plot.title = element_text(size = 6)
+      panel.grid.minor.y = element_blank(),
+      plot.title = element_text(size = 8)
     )
 }
 
-create_prob_plot <- function(df, target_pred) {
+create_prob_plot <- function(df, target_pred, gid, pid) {
   
-  df <- prep_for_probplot(df)
-  #legend_name <- if(target_pred == "pred_pressure_allowed") "Blocker" else "Rusher"
+  df <- prep_for_probplot(df, gid, pid)
+  title_str <- if(target_pred == "pred_pressure_allowed") "Allowed" else "Delivered"
   
   ggplot(df, aes(x = frames_from_start, y = !!as.name(target_pred), group = displayName, color = displayName)) +
     geom_line() +
@@ -246,11 +267,12 @@ create_prob_plot <- function(df, target_pred) {
     scale_x_continuous("Time(s)", 
                        breaks = seq(0, max(df$frames_from_start), 5),
                        labels = ~.x/10) +
-    ggtitle("Frame-by-Frame Pressure Probability") +
+    ggtitle(paste("Frame-by-Frame Pressure", title_str, "Probability")) +
     theme_minimal() +
     theme(
       panel.grid.minor.x = element_blank(),
-      panel.grid.minor.y = element_blank()
+      panel.grid.minor.y = element_blank(),
+      legend.title = element_blank()
     )
 }
 
@@ -263,34 +285,23 @@ df_pff <- read_csv(file.path(data_folder, "pffScoutingData.csv"))
 df_plays <- read_csv(file.path(data_folder, "plays.csv"))
 df_players <- read_csv(file.path(data_folder, "players.csv"))
 
-#this can be original tracking data as I filter to frame needing a prediction in df_results
-df_tracking  <- read_rds(file.path(data_folder, "df_tracking_foi.rds")) 
-
-
 ##model results data
-model_results <- readr::read_rds("data/model_results.rds")
-block_results <- model_results$block$df_all
-rush_results <- model_results$rush$df_all
-rm(model_results)
-gc()
+block_results <- readr::read_rds(file.path(data_folder, "block_results.rds"))
+rush_results <- readr::read_rds(file.path(data_folder, "rush_results.rds"))
+df_results <- readr::read_rds(file.path(data_folder, "df_results.rds"))
 
 
 #TODO - save off versions of this that can be uploaded to kaggle and not changed when using
 ##additional data
 pff_folder <- file.path(data_folder, "pff")
-passblockgrades <- read_csv(file.path(pff_folder, "passblockgrades.csv")) %>% select(player_id, player, pbe, grade = grades_pass_block)
-passrushgrades <- read_csv(file.path(pff_folder, "passrushgrades.csv")) %>% select(player_id, player, prp, grade = grades_pass_rush_defense)
+kaggle_folder <- file.path(data_folder, "for_kaggle")
 
+passblockgrades <- read_csv(file.path(pff_folder, "pass_blocking_efficiency.csv")) %>% select(player_id, player, pbe, grade = grades_pass_block)
+passrushgrades <- read_csv(file.path(pff_folder, "pass_rush_grades.csv")) %>% select(player_id, player, prp, grade = grades_pass_rush_defense)
 
-# #PUSH BACK TO MODEL SCRIPT ----------------------------------------------
+# readr::write_rds(passblockgrades, file.path(kaggle_folder, "passblockgrades.csv"))
+# readr::write_rds(passrushgrades, file.path(kaggle_folder, "passrushgrades.csv"))
 
-df_results <- df_tracking %>% 
-  left_join(select(block_results, gameId, playId, frameId, nflId, pred_pressure_allowed), by = c("gameId", "playId", "frameId", "nflId")) %>%
-  left_join(select(rush_results, gameId, playId, frameId, nflId, pred_pressure_delivered), by = c("gameId", "playId", "frameId", "nflId")) %>% 
-  group_by(gameId, playId, frameId) %>% 
-  filter(any(!is.na(pred_pressure_allowed))) %>% 
-  filter(any(!is.na(pred_pressure_delivered))) %>% 
-  ungroup()
 
 
 # Visualize pressure allowed/delivered probabilities ----------------------
@@ -301,52 +312,71 @@ df_pff_pocket <- df_pff %>%
       pff_positionLinedUp == "QB" & pff_role == "Pass"
   )
 
-# #find best over expected play from Bengals DE's
+
+###good first frame example with LB and DT over center
+frame1_ex_gameId <- 2021091901
+frame1_ex_playId <- 2509
+
+frame1_df <- df_results %>% 
+  filter(gameId == frame1_ex_gameId, playId == frame1_ex_playId) %>% 
+  filter(frameId == min(frameId))
+
+# frame1_for_plot <- prep_example_for_plot(frame1_df, frame1_ex_gameId, frame1_ex_playId)
+# 
+# frame1_for_plot_pocket <- frame1_for_plot %>% 
+#   inner_join(
+#     select(df_pff_pocket, gameId, playId, nflId, pff_positionLinedUp), 
+#     by = c("gameId", "playId", "nflId")
+#   ) %>% 
+#   arrange(factor(pff_positionLinedUp, levels = hex_points))
+# 
+# frame1_fieldplot <- geom_football("nfl", display_range = "full", x_trans = 59, y_trans = 26.5, xlims = c(40, 80), ylims = c(0, 60)) + 
+#   geom_polygon(data = frame1_for_plot_pocket, aes(x = x, y = y), fill = "blue", alpha = 0.3) +
+#   geom_point(data = filter(frame1_for_plot, side_of_ball == "off"), aes(x = x, y = y, fill = pred_pressure_allowed, size = size_of_point), shape = 21) +
+#   scale_fill_gradient("off", low = "white", high = "blue") +
+#   new_scale("fill") +
+#   geom_point(data = filter(frame1_for_plot, side_of_ball == "def"), aes(x = x, y = y, fill = pred_pressure_delivered, size = size_of_point), shape = 21) +
+#   scale_fill_gradient("def", low = "white", high = "orange") +
+#   geom_text(data = frame1_for_plot, aes(x = x, y = y, label = jerseyNumber, size = size_of_point*0.5), color = "black", vjust = 0.35) +
+#   scale_radius() +
+#   theme(legend.position = "none")
+
+frame1_pocket_plot <- create_pocket_plot(frame1_df, frame1_ex_gameId, frame1_ex_playId)
+
+# #find example plays to animate
 # rush_mets <- calc_metric(rush_results, target = "pressure_delivered")
 # 
-# bengals_example <- df_pff %>% 
-#   inner_join(df_players, by = "nflId") %>% 
-#   filter(pff_sack==1) %>% 
-#   filter(displayName == "Trey Hendrickson" | displayName == "Sam Hubbard") %>% 
-#   select(contains("Id"), displayName) %>% 
-#   select(-pff_nflIdBlockedPlayer) %>% 
-#   inner_join(df_results, by = c("gameId", "playId", "nflId")) %>% 
+# hendrickson_examples <- df_pff %>%
+#   inner_join(df_players, by = "nflId") %>%
+#   filter(pff_sack==1) %>%
+#   filter(displayName == "Trey Hendrickson") %>% # | displayName == "Sam Hubbard") %>%
+#   select(contains("Id"), displayName) %>%
+#   select(-pff_nflIdBlockedPlayer) %>%
+#   inner_join(df_results, by = c("gameId", "playId", "nflId")) %>%
 #   inner_join(rush_mets, by = c("gameId", "playId", "nflId")) %>% 
-#   filter(metric == max(metric)) %>% 
+#   arrange(desc(pred_pressure_delivered)) %>% 
 #   select(gameId, playId) %>% 
-#   distinct() %>% 
-#   as.list()
+#   distinct()
 
-ex_gameId <- 2021093000
-ex_playId <- 3206
+#leading contenders
+# ex_gameId <- 2021091901
+# ex_playId <- 1796
+# ex_gameId <- 2021101002
+# ex_playId <- 4007
 
-#play chosen from Hendrickson's highlights
-df_for_plot <- prep_example_for_plot(df_results, ex_gameId, ex_playId) %>% 
-  mutate(size_of_point = ifelse(team == "football", 1, 10)) %>% 
-  mutate(prob = ifelse(!is.na(pred_pressure_allowed), pred_pressure_allowed, pred_pressure_delivered)) %>% 
-  mutate(side_of_ball = ifelse(team == possessionTeam | team == "football", "off", "def"))
+#one of Trey Hendrickson's sacks
+ex_gameId <- 2021101002
+ex_playId <- 1792
 
-pause_frame <- rush_results %>% 
-  inner_join(select(df_for_plot, ends_with("Id")), by = c("gameId", "playId", "nflId", "frameId")) %>% 
-  filter(dist_to_qb == min(dist_to_qb)) %>% 
-  pull(frameId)
+full_play_plot <- create_pocket_plot(df_results, ex_gameId, ex_playId)
 
-# #running this will make plot 1 frame where max probability was
-# df_for_plot %>%
-#   group_by(gameId, playId, frameId) %>%
-#   mutate(max_prob = max(pred_pressure_delivered, na.rm = TRUE)) %>%
-#   ungroup() %>%
-#   filter(max_prob == max(max_prob,na.rm=TRUE)) %>% 
-#   create_pocket_plot()
-# 
-# create_pocket_plot(filter(df_for_plot, frameId == pause_frame))
+block_prob_plot <- create_prob_plot(block_results, "pred_pressure_allowed", ex_gameId, ex_playId)
+rush_prob_plot <- create_prob_plot(rush_results, "pred_pressure_delivered", ex_gameId, ex_playId)
 
-full_play_plot <- create_pocket_plot(df_for_plot)
-block_prob_plot <- create_prob_plot(block_results, "pred_pressure_allowed")
-rush_prob_plot <- create_prob_plot(rush_results, "pred_pressure_delivered")
-
-
-
+max_frame <- df_results %>% 
+  filter(gameId == ex_gameId, playId == ex_playId) %>% 
+  pull(frameId) %>% 
+  max()
 
 
 
@@ -386,7 +416,7 @@ rush_metric_table <- rush_results %>%
 fbf_rush2join <- rush_results %>% 
   select(ends_with("Id"), jerseyNumber, team, x, y, s, a, dis, o, dir,
          side_of_ball, contains("delivered"), pff_positionLinedUp, pff_role, contains("near_oppo"),
-         dist_to_qb, data_split)
+         dist_to_qb)
 
 fbf_results_joined <- block_results %>% 
   inner_join(
@@ -458,38 +488,64 @@ rush_compare_metrics <- rush_both_mets %>%
 
 
 
+  
 
+  
 # actually output ---------------------------------------------------------
 
 
 # full_play_plot + transition_time(frameId)
 # block_prob_plot + transition_reveal(frameId)
 # rush_prob_plot + transition_reveal(frameId)
-# 
-# animate(
-#   p + transition_time(frameId),
-#   nframes = max(df_for_plot$frameId),
-#   renderer = magick_renderer(),
-#   width = 720,
-#   height = 440,
-#   res = 150
-# )
+
+play_anim <- animate(
+  full_play_plot + transition_time(frameId),
+  nframes = max_frame,
+  renderer = magick_renderer(),
+  width = 720,
+  height = 440,
+  res = 100
+)
 
 
-compare_metrics(block_compare_metrics, "grade", "avg_metric", "PFF Grade", "PAUE")
-compare_metrics(block_compare_metrics, "grade", "avg_metric_adj", "PFF Grade", "Adj PAUE")
+compare_p1 <- compare_metrics(block_compare_metrics, "grade", "avg_metric", "PFF Grade", "PAUE")
+#compare_metrics(block_compare_metrics, "grade", "avg_metric_adj", "PFF Grade", "Adj PAUE")
 
-compare_metrics(rush_compare_metrics, "grade", "avg_metric", "PFF Grade", "PDOE")
-compare_metrics(rush_compare_metrics, "grade", "avg_metric_adj", "PFF Grade", "Adj PDOE")
+compare_p2 <- compare_metrics(rush_compare_metrics, "grade", "avg_metric", "PFF Grade", "PDOE")
+#compare_metrics(rush_compare_metrics, "grade", "avg_metric_adj", "PFF Grade", "Adj PDOE")
 
 
 block_metric_table %>%
+  head(25) %>% 
   select(-nflId) %>% 
   rename(`Average PAUE` = avg_metric, `Total PAUE` = total_metric) %>% 
   kbl(caption = "Min 100 snaps") %>%
   kable_paper("hover", full_width = FALSE)
 
 rush_metric_table %>%
+  head(25) %>% 
+  select(-nflId) %>% 
   rename(`Average PDOE` = avg_metric, `Total PDOE` = total_metric) %>% 
   kbl(caption = "Min 100 snaps") %>%
   kable_paper("hover", full_width = FALSE)
+
+block_both_mets %>% 
+  arrange(desc(avg_metric_adj)) %>% 
+  mutate(Rank = dplyr::row_number()) %>% 
+  head(25) %>%  
+  select(
+    Name, Position, 
+    Snaps, `Average PAUE` = avg_metric, `Total PAUE` = total_metric,
+    `Adj Eligible Snaps` = Snaps_adj,`Average Adj PAUE` = avg_metric_adj, `Total Adj PAUE` = total_metric_adj
+  )
+
+rush_both_mets %>% 
+  arrange(desc(avg_metric_adj)) %>% 
+  mutate(Rank = dplyr::row_number()) %>% 
+  head(25) %>% 
+  select(
+    Name, Position, 
+    Snaps, `Average PDOE` = avg_metric, `Total PDOE` = total_metric,
+    `Adj Eligible Snaps` = Snaps_adj,`Average Adj PDOE` = avg_metric_adj, `Total Adj PDOE` = total_metric_adj
+  )
+
